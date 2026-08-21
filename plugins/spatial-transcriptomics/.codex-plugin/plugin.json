@@ -1,0 +1,39 @@
+{
+  "name": "spatial-transcriptomics",
+  "version": "0.1.0",
+  "description": "Staged 10x Visium spatial transcriptomics analysis workflow with human review gates and LLM biological interpretation at every stage.",
+  "author": {
+    "name": "QING1105",
+    "url": "https://github.com/QING1105"
+  },
+  "homepage": "https://github.com/QING1105/ezST/tree/main/plugins/spatial-transcriptomics",
+  "repository": "https://github.com/QING1105/ezST",
+  "license": "MIT",
+  "keywords": [
+    "spatial-transcriptomics",
+    "visium",
+    "scanpy",
+    "bioinformatics",
+    "single-cell",
+    "destvi",
+    "cellchat"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Spatial Transcriptomics (10x Visium)",
+    "shortDescription": "Staged Visium analysis with review gates",
+    "longDescription": "End-to-end 10x Visium spatial transcriptomics analysis: load, QC, normalize, cluster, spatial domains, SVG detection, deconvolution (DestVI/SPOTlight), neighborhood enrichment, and CellChat communication. Each stage stops for human review after the LLM interprets the biological meaning of plots and results.",
+    "developerName": "QING1105",
+    "category": "Bioinformatics",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/QING1105/ezST/tree/main/plugins/spatial-transcriptomics",
+    "defaultPrompt": [
+      "Analyze my gastric cancer Visium data at '/data/gastric/GSE246011/' with the staged spatial transcriptomics workflow, stopping at each stage for my review.",
+      "Run cell-cell communication analysis on my clustered Visium data at '/data/gastric/proj/results/04_clustering/sample_clustered.h5ad'.",
+      "Deconvolve my Visium spatial data into cell type proportions using the scRNA-seq reference at '/data/ref_scRNA.h5ad'."
+    ]
+  }
+}

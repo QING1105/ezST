@@ -1,0 +1,20 @@
+{
+  "name": "ezST",
+  "interface": {
+    "displayName": "ezST — Spatial Transcriptomics Skills"
+  },
+  "plugins": [
+    {
+      "name": "spatial-transcriptomics",
+      "source": {
+        "source": "local",
+        "path": "./plugins/spatial-transcriptomics"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Bioinformatics"
+    }
+  ]
+}
