@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ezST"
+version = "0.1.0"
+description = "10x Visium spatial transcriptomics analysis skills for Codex — staged workflow with human review gates and LLM biological interpretation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "QING1105" }]
+keywords = ["spatial-transcriptomics", "visium", "scanpy", "bioinformatics", "single-cell", "destvi", "cellchat", "codex", "skill"]
+
+dependencies = [
+    "scanpy>=1.10",
+    "anndata>=0.10",
+    "squidpy>=1.6",
+    "scvi-tools>=1.2",
+    "leidenalg>=0.10",
+    "cell2location>=0.05",
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "python-igraph",
+    "harmonypy",
+    "tqdm",
+    "joblib",
+]
+
+[project.optional-dependencies]
+# R 侧依赖（Seurat / SPOTlight / CellChat）无法通过 pip 安装，
+# 请运行 install/install_r_packages.R（需要 R >= 4.3 + Rtools/Build Tools）
+r = []
+
+[tool.setuptools]
+packages = []
+include-package-data = true
+
+[tool.setuptools.package-data]
+# skill 文件随包分发，供 codex plugin 读取
+"*" = ["**/*.md", "**/*.json", "**/*.png", "**/*.yml", "**/*.txt", "**/*.R", "**/*.sh", "**/*.bat"]

@@ -23,29 +23,31 @@
 
 依赖 Biomni 的 `spatial_transcriptomics` 工具模块（11 个分析函数）。
 
-## 环境安装（一键）
+## 安装（一键 pip）
 
-ezST 自带完整环境安装脚本，一条命令建好 Python + R + 全部依赖：
+ezST 是标准 Python 包，`pip install` 一条命令装好全部 Python 依赖（scanpy / squidpy / scvi-tools / leidenalg / cell2location）：
 
 ```bash
-# Linux / macOS
-bash install/install.sh
+# 直接安装（发布版）
+pip install ezST
 
-# Windows
-install\install.bat
+# 或从 GitHub 安装（最新）
+pip install git+https://github.com/QING1105/ezST.git
 ```
 
-脚本自动完成：
-1. **创建 conda 环境 `ezST`**（Python 3.10）
-2. **安装 Python 包**：scanpy、squidpy、scvi-tools（DestVI）、leidenalg、cell2location 等
-3. **安装 R 包**：Seurat、SPOTlight（Bioconductor）、CellChat v2（GitHub）
-4. **验证**：自动检查所有关键包可导入
+> 需要 Python >= 3.10。建议装进独立虚拟环境（conda/venv）。
 
-> 前提：已安装 [Miniconda](https://docs.conda.io/en/latest/miniconda.html)；Windows 还需 [Rtools](https://cran.r-project.org/bin/windows/Rtools/)（R 包编译工具，脚本会自动检测提示）。
+### R 依赖（仅 S4 反卷积 / S5 细胞通讯需要）
 
-使用环境：`conda activate ezST`
+R 包（Seurat / SPOTlight / CellChat）无法通过 pip 安装，单独一条命令：
 
-## 安装 skill
+```bash
+Rscript install/install_r_packages.R
+```
+
+> 需要 R >= 4.3；Windows 需 [Rtools](https://cran.r-project.org/bin/windows/Rtools/)（脚本自动检测提示）。
+
+### 安装 skill
 
 ### 1. 添加 marketplace
 
@@ -138,13 +140,12 @@ codex plugin install spatial-transcriptomics --from ezST
 
 ```
 ezST/
+├── pyproject.toml                      # Python 包定义（pip install 一键装依赖）
 ├── .agents/plugins/marketplace.json    # 市场清单
-├── install/                            # 一键环境安装
-│   ├── environment.yml                 #   conda 环境定义
-│   ├── requirements.txt                #   pip 补充依赖
+├── install/                            # R 依赖安装
 │   ├── install_r_packages.R            #   R 包安装（Seurat/SPOTlight/CellChat）
-│   ├── install.sh                      #   Linux/macOS 一键安装
-│   └── install.bat                     #   Windows 一键安装
+│   ├── install.sh                      #   Linux/macOS 一键（pip + R）
+│   └── install.bat                     #   Windows 一键（pip + R）
 ├── README.md
 └── plugins/
     └── spatial-transcriptomics/        # 插件（领域包）

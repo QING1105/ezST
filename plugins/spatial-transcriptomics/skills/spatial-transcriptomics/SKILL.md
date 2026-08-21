@@ -24,27 +24,28 @@ Before any analysis, verify the environment is ready. If not, guide the user to 
 ```bash
 # Check critical Python packages
 python -c "import scanpy, squidpy, scvi, leidenalg; print('OK')"
-# Check critical R packages
+# Check critical R packages (only needed for S4/S5)
 Rscript -e "library(Seurat); library(SPOTlight); library(CellChat); cat('OK\n')"
 ```
 
-If any import fails:
-1. Tell the user the ezST environment is missing.
-2. Run the one-click installer (do not install packages manually one by one):
-   - Linux/macOS: `bash install/install.sh`
-   - Windows: `install\install.bat`
-3. Wait for the installer to finish (it creates the conda env `ezST`, installs Python + R deps, and verifies).
-4. After install, `conda activate ezST` and re-run the check above.
+If any Python import fails:
+1. Tell the user ezST is not installed.
+2. Install it with pip (one command, auto-installs all Python deps):
+   ```bash
+   pip install git+https://github.com/QING1105/ezST.git
+   ```
+3. Re-run the Python check above.
 
-The install scripts live in the `install/` directory of the ezST repository. If the repo is only available via the marketplace, clone it first:
+If R packages are missing (only needed for S4 deconvolution / S5 communication):
+1. Tell the user the R deps are missing.
+2. Run the R installer (single command):
+   ```bash
+   Rscript install/install_r_packages.R
+   ```
+   (needs R >= 4.3; Windows needs Rtools)
+3. Re-run the R check above.
 
-```bash
-git clone https://github.com/QING1105/ezST.git
-cd ezST
-bash install/install.sh   # or install\install.bat on Windows
-```
-
-Do NOT start analysis until the environment check passes.
+Do NOT start analysis until the required checks pass (S1-S3 only need Python; S4/S5 also need R).
 
 ## Data Requirements
 

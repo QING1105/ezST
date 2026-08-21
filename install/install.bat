@@ -1,56 +1,43 @@
 @echo off
-REM ezST 一键环境安装（Windows）
+REM ezST 一键安装（Windows）— pip 方式
 REM 用法: install.bat
-REM 创建 conda 环境 ezST → 安装 Python 包 → 安装 R 包 → 验证
+REM 1. pip 安装 ezST（自动装全部 Python 依赖）
+REM 2. 安装 R 包（Seurat / SPOTlight / CellChat）— 仅 S4/S5 需要
 chcp 65001 >nul
-setlocal enabledelayedexpansion
-
-set ENV_NAME=ezST
+setlocal
 set SCRIPT_DIR=%~dp0
+set REPO_DIR=%SCRIPT_DIR%..
 
-echo === ezST 环境安装 ===
+echo === ezST 安装 ===
 
-REM 1. 检查 conda
-where conda >nul 2>nul
+REM 1. 检查 Python >= 3.10
+python -c "import sys; assert sys.version_info >= (3,10)" >nul 2>nul
 if errorlevel 1 (
-    echo [错误] 未检测到 conda。请先安装 Miniconda: https://docs.conda.io/en/latest/miniconda.html
+    echo [错误] 需要 Python ^>= 3.10
     pause
     exit /b 1
 )
 
-REM 2. 创建/更新 conda 环境
-conda env list | findstr /r /c:"^ezST " >nul
+REM 2. pip 安装
+echo [1/2] 安装 ezST (pip)...
+pip install -e "%REPO_DIR%"
 if errorlevel 1 (
-    echo [创建] 环境 %ENV_NAME% ...
-    conda env create -n %ENV_NAME% -f "%SCRIPT_DIR%environment.yml"
+    echo [错误] pip 安装失败
+    pause
+    exit /b 1
+)
+
+REM 3. R 包
+echo [2/2] 安装 R 包 (Seurat / SPOTlight / CellChat)...
+where Rscript >nul 2>nul
+if errorlevel 1 (
+    echo [警告] 未检测到 R。S4/S5 需要 R ^>= 4.3，请安装后运行: Rscript install\install_r_packages.R
 ) else (
-    echo [更新] 环境 %ENV_NAME% ...
-    conda env update -n %ENV_NAME% -f "%SCRIPT_DIR%environment.yml"
+    Rscript "%SCRIPT_DIR%install_r_packages.R"
 )
-if errorlevel 1 (
-    echo [错误] conda 环境创建失败
-    pause
-    exit /b 1
-)
-
-REM 3. 激活环境
-call conda activate %ENV_NAME%
-echo [✓] 环境 %ENV_NAME% 已激活
-
-REM 4. pip 补充依赖
-echo [安装] Python 补充依赖...
-pip install -r "%SCRIPT_DIR%requirements.txt"
-
-REM 5. R 包安装
-echo [安装] R 包 (Seurat / SPOTlight / CellChat)...
-Rscript "%SCRIPT_DIR%install_r_packages.R"
-
-REM 6. 验证
-echo [验证] 安装结果...
-python -c "import scanpy, squidpy, scvi; print('[OK] scanpy', scanpy.__version__); print('[OK] squidpy', squidpy.__version__); print('[OK] scvi-tools', scvi.__version__)"
-Rscript -e "library(Seurat); library(SPOTlight); library(CellChat); cat('[OK] Seurat / SPOTlight / CellChat\n')"
 
 echo.
-echo === ezST 环境安装完成 ===
-echo 使用: conda activate %ENV_NAME%
+echo === ezST 安装完成 ===
+echo Python: scanpy/squidpy/scvi-tools/leidenalg 已就绪
+echo R: 运行 Rscript install\install_r_packages.R 可重装/更新 R 包
 pause
