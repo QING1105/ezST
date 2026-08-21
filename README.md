@@ -23,17 +23,29 @@
 
 依赖 Biomni 的 `spatial_transcriptomics` 工具模块（11 个分析函数）。
 
-## 前提条件
+## 环境安装（一键）
 
-| 依赖 | 说明 |
-|:--|:--|
-| [Codex CLI](https://github.com/openai/codex) | 安装技能的运行环境 |
-| [Biomni](https://github.com/snap-stanford/Biomni) | 提供 `spatial_transcriptomics` 工具模块（11 个函数） |
-| Python 依赖 | scanpy, squidpy, scvi-tools, leidenalg（见 Biomni `new_software_v008.sh`） |
-| R 依赖（仅 S4 SPOTlight / S5 CellChat） | SPOTlight, CellChat v2, Seurat（见 Biomni `install_r_packages_spatial.R`） |
-| 参考 scRNA-seq（仅 S4） | h5ad 格式，obs 含细胞类型标签列（如 `level_3`） |
+ezST 自带完整环境安装脚本，一条命令建好 Python + R + 全部依赖：
 
-## 安装
+```bash
+# Linux / macOS
+bash install/install.sh
+
+# Windows
+install\install.bat
+```
+
+脚本自动完成：
+1. **创建 conda 环境 `ezST`**（Python 3.10）
+2. **安装 Python 包**：scanpy、squidpy、scvi-tools（DestVI）、leidenalg、cell2location 等
+3. **安装 R 包**：Seurat、SPOTlight（Bioconductor）、CellChat v2（GitHub）
+4. **验证**：自动检查所有关键包可导入
+
+> 前提：已安装 [Miniconda](https://docs.conda.io/en/latest/miniconda.html)；Windows 还需 [Rtools](https://cran.r-project.org/bin/windows/Rtools/)（R 包编译工具，脚本会自动检测提示）。
+
+使用环境：`conda activate ezST`
+
+## 安装 skill
 
 ### 1. 添加 marketplace
 
@@ -127,6 +139,12 @@ codex plugin install spatial-transcriptomics --from ezST
 ```
 ezST/
 ├── .agents/plugins/marketplace.json    # 市场清单
+├── install/                            # 一键环境安装
+│   ├── environment.yml                 #   conda 环境定义
+│   ├── requirements.txt                #   pip 补充依赖
+│   ├── install_r_packages.R            #   R 包安装（Seurat/SPOTlight/CellChat）
+│   ├── install.sh                      #   Linux/macOS 一键安装
+│   └── install.bat                     #   Windows 一键安装
 ├── README.md
 └── plugins/
     └── spatial-transcriptomics/        # 插件（领域包）

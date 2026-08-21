@@ -17,6 +17,35 @@ Run 10x Visium spatial transcriptomics analysis as a **staged pipeline**. The wo
 
 Do NOT proceed to the next stage without an explicit user decision.
 
+## Environment Check (run first)
+
+Before any analysis, verify the environment is ready. If not, guide the user to install it (one command, no manual steps):
+
+```bash
+# Check critical Python packages
+python -c "import scanpy, squidpy, scvi, leidenalg; print('OK')"
+# Check critical R packages
+Rscript -e "library(Seurat); library(SPOTlight); library(CellChat); cat('OK\n')"
+```
+
+If any import fails:
+1. Tell the user the ezST environment is missing.
+2. Run the one-click installer (do not install packages manually one by one):
+   - Linux/macOS: `bash install/install.sh`
+   - Windows: `install\install.bat`
+3. Wait for the installer to finish (it creates the conda env `ezST`, installs Python + R deps, and verifies).
+4. After install, `conda activate ezST` and re-run the check above.
+
+The install scripts live in the `install/` directory of the ezST repository. If the repo is only available via the marketplace, clone it first:
+
+```bash
+git clone https://github.com/QING1105/ezST.git
+cd ezST
+bash install/install.sh   # or install\install.bat on Windows
+```
+
+Do NOT start analysis until the environment check passes.
+
 ## Data Requirements
 
 The workflow accepts three input formats (auto-detected):
