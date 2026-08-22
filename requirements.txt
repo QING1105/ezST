@@ -1,0 +1,15 @@
+# ezST Python 依赖（pip install -r requirements.txt）— 经典 Visium
+scanpy>=1.10
+anndata>=0.10
+squidpy>=1.6
+scvi-tools>=1.2
+leidenalg>=0.10
+cell2location>=0.05
+numpy
+pandas
+scipy
+matplotlib
+python-igraph
+harmonypy
+tqdm
+joblib

@@ -35,7 +35,8 @@ dependencies = [
 r = []
 
 [tool.setuptools]
-packages = []
+package-dir = {"" = "src"}
+packages = ["ezst"]
 include-package-data = true
 
 [tool.setuptools.package-data]

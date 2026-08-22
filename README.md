@@ -21,7 +21,7 @@
 3. **停下**，等你审查
 4. 你选择 `通过` / `调整` / `跳过` 后才进入下一阶段
 
-依赖 Biomni 的 `spatial_transcriptomics` 工具模块（11 个分析函数）。
+ezST 自带完整的 Python 运行时（`src/ezst/` 独立包，11 个分析函数），不依赖任何外部项目。
 
 ## 安装（一键 pip）
 
@@ -140,7 +140,11 @@ codex plugin install spatial-transcriptomics --from ezST
 
 ```
 ezST/
-├── pyproject.toml                      # Python 包定义（pip install 一键装依赖）
+├── pyproject.toml                      # Python 包定义（pip install 一键装依赖 + src/ezst 代码）
+├── requirements.txt                    # Python 依赖清单
+├── src/ezst/                           # 独立运行时（不依赖 Biomni）
+│   ├── __init__.py                     #   导出 11 个分析函数
+│   └── visium.py                       #   经典 Visium 全流程实现
 ├── .agents/plugins/marketplace.json    # 市场清单
 ├── install/                            # R 依赖安装
 │   ├── install_r_packages.R            #   R 包安装（Seurat/SPOTlight/CellChat）
