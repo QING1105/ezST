@@ -157,7 +157,12 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 ### 数据集
 
 - 公开测试数据：GEO [GSE246011](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE246011)（胃癌 Visium，6 样本，wide-CSV 格式）
-- Visium HD 示例：小鼠小肠（Haber 2017 参考注释，见迭代记录 0826）
+- **Visium HD 示例：10x Genomics 官方小鼠小肠（Mouse Small Intestine, FFPE, C57BL/6）**
+  - 数据页：[Visium HD Spatial Gene Expression Library, Mouse Small Intestine (FFPE)](https://www.10xgenomics.com/datasets/visium-hd-cytassist-gene-expression-libraries-of-mouse-intestine)
+  - 直接下载（Space Ranger 3.0.0 输出，含 2/8/16µm bin + 高分辨率组织图像）：
+    - `https://cf.10xgenomics.com/samples/spatial-exp/3.0.0/Visium_HD_Mouse_Small_Intestine/Visium_HD_Mouse_Small_Intestine_binned_outputs.tar.gz`
+    - `https://cf.10xgenomics.com/samples/spatial-exp/3.0.0/Visium_HD_Mouse_Small_Intestine/Visium_HD_Mouse_Small_Intestine_tissue_image.btf`
+  - 参考注释：Haber et al. 2017（小鼠小肠 scRNA-seq，label transfer）
 - 反卷积/注释阶段需要参考 scRNA-seq（h5ad + 细胞类型标签）
 
 ## 迭代记录
