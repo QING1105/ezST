@@ -143,8 +143,6 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 | **Visium HD (cell)** | 10x Visium HD | **单细胞**（分割后） | 分割（2 种方法）→ QC → **注释（label transfer）** → 空间域 → 邻域+通讯 | 分割后按 scRNA 处理，**不需要反卷积**，用注释 |
 | **Visium HD (bin)** | 10x Visium HD | bin（2/8/16µm 等规格） | 按 spot 类似处理或先分割为细胞 | bin 是转录捕获单元，非生物学单元；bin 规格由数据决定 |
 
-> 当前已验证的平台：Classic Visium、Visium HD。其他平台（Xenium 等）尚未在本仓库适配验证，不列入上表。
-
 ### Visium HD 分割的两种方法
 
 `spatial-visium-hd` skill 的 S4 提供两种细胞重建方法（二选一或都跑对比）：

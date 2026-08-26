@@ -9,7 +9,6 @@ Staged spatial transcriptomics analysis for Codex, with human review gates at ev
 | 10x Visium (v1/v2) | `spatial-transcriptomics` (classic) | spot | load+QC → normalize+cluster → domains+SVG → **deconvolve** → neighborhood+CellChat |
 | **10x Visium HD** | `spatial-visium-hd` | **single cell** (after segmentation) | segment (bin2cell / Proseg) → QC → **annotate (label transfer)** → domains → neighborhood+CellChat |
 
-> Verified platforms: Classic Visium and Visium HD. Other platforms are NOT yet validated in this repo.
 > Visium HD note: after segmentation the data is single-cell level, so it is processed **as scRNA-seq** (annotation via label transfer), **not deconvolved**. See `spatial-visium-hd/SKILL.md`.
 
 ## Skills included
