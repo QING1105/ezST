@@ -68,8 +68,7 @@ def _plot_setup(output_dir: str) -> None:
                 _fm.fontManager.addfont(_p)
         except Exception:
             pass
-    _plt.rcParams["font.family"] = "sans-serif"
-    _plt.rcParams["font.sans-serif"] = ["Arial", "SimHei"]
+    _plt.rcParams["font.family"] = ["Arial", "SimHei"]
     _plt.rcParams["axes.unicode_minus"] = False
 
 
