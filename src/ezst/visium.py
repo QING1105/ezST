@@ -1146,11 +1146,16 @@ def identify_spatial_domains(
     n_domains = adata.obs["spatial_domain"].nunique()
     steps.append(f"Spatial domain clustering found {n_domains} domains (res={resolution})")
 
-    # 5. Domain 注释 (官方标准: 聚类后必须给每个 domain 生物学证据, 供 LLM 命名)
-    #    (a) marker 基因: 每个 domain 相对其他 domain 的差异表达 (rank_genes_groups)
-    #    (b) 细胞类型组成: 每个 domain 内 cell_type 比例 (cross-tab)
-    #    输出: domain_annotation.csv + 打印摘要. LLM 读这些证据给 domain 贴标签
-    #    (隐窝/绒毛/肌肉层等), 不在代码里写死命名.
+    # 5. Domain 注释 (聚类后必须给每个 domain 生物学证据, 供 LLM 按命名规范命名)
+    #    代码产出证据 (annotation CSV): marker 基因 + 细胞类型组成.
+    #    LLM 命名流程 (5 步, 见 spatial-visium-hd/SKILL.md "空间域命名规范"):
+    #      1. 读 annotation CSV (marker 基因 + 细胞类型组成)
+    #      2. 判定组织类型: 从样本元数据/组织来源推断 (肠/肺/心/肝/癌)
+    #      3. 对照组织类型参考表选候选名: 优先解剖结构, 其次组织学特征
+    #      4. 用 marker 基因验证: 候选名必须有 marker 支持
+    #         (如"隐窝底部"需 Lgr5/Defa 等潘氏/干细胞 marker; "心肌层"需 TNNT2/ACTA2 等)
+    #      5. 输出统一格式: D{n} {结构名}({特征}); 证据不足 → D{n} 未命名(待定) 并说明缺什么证据
+    #    命名不在代码里写死 (避免 LLM 自由发挥, 统一走 5 步流程).
     try:
         if adata.n_vars <= 100000:
             # 30 万细胞 rank_genes_groups 很慢, 用 downsample (每 domain 最多 5000)
