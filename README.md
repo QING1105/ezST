@@ -141,9 +141,9 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 |:--|:--|:--|:--|:--|
 | **Classic Visium** | 10x Visium (v1/v2) | spot (~55µm) | 加载+QC → 归一化+聚类 → 空间域+SVG → **反卷积** → 邻域+通讯 | spot 是混合信号，需要反卷积解出细胞类型 |
 | **Visium HD (cell)** | 10x Visium HD | **单细胞**（分割后） | 分割（2 种方法）→ QC → **注释（label transfer）** → 空间域 → 邻域+通讯 | 分割后按 scRNA 处理，**不需要反卷积**，用注释 |
-| **Visium HD (bin)** | 10x Visium HD | 8µm bin | 直接按 spot 类似处理或先分割 | bin 是转录捕获单元，非生物学单元 |
-| **Xenium** | 10x Xenium | 单细胞（panel 基因） | 注释 → 空间域 → 邻域+通讯 | 基因是 panel 子集，跳过 HVG 选择 |
-| **Stereo-seq / 其他** | 华大/通用 | spot/bin/cell | 通用分支（按数据规模自适应参数） | 坐标来自通用格式 |
+| **Visium HD (bin)** | 10x Visium HD | bin（2/8/16µm 等规格） | 按 spot 类似处理或先分割为细胞 | bin 是转录捕获单元，非生物学单元；bin 规格由数据决定 |
+
+> 当前已验证的平台：Classic Visium、Visium HD。其他平台（Xenium 等）尚未在本仓库适配验证，不列入上表。
 
 ### Visium HD 分割的两种方法
 
@@ -153,8 +153,6 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 |:--|:--|:--|:--|
 | **bin2cell（10x 官方）** | StarDist 核分割 + 核多边形 buffer 扩展（29px≈8µm）→ bin 聚合 | 核分割后按核归属聚合 2µm bin | `04_bin2cell.h5ad`（蓝色轮廓 overlay） |
 | **Proseg（贝叶斯）** | StarDist 核分割 + Proseg 贝叶斯分割（voxel_size/样本数自动） | 用转录空间 + 核先验联合分割 | `proseg_out.zarr/` + `04_proseg_cells.h5ad`（红色轮廓 overlay） |
-
-> 分割效果对比见文末**迭代记录（0826）**。
 
 ### 数据集
 
@@ -166,6 +164,10 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 
 - **0823**：我们修复了一个上传内容有误的 bug，已重新 git。
 - **0826**：补充上了 Visium HD 的适配，其中 segment 部分提供了两种方法，10x 官方的 bin2cell 和 Proseg，具体分割效果见最后组图。
+
+### Visium HD 全流程组图（0826）
+
+![Visium HD 全流程](docs/figs/visium_hd_overview.png)
 
 ## 目录结构
 
