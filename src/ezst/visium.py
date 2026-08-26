@@ -54,8 +54,96 @@ def _plot_setup(output_dir: str) -> None:
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # FIX 2026-08-26: 固定字体规范 (用户要求) — 英文 Arial, 中文 SimHei.
+    # 优先从常见路径 addfont, 缺失时静默跳过 (fallback 默认字体).
+    import matplotlib.font_manager as _fm
+    import matplotlib.pyplot as _plt
+    for _p in ("/usr/share/fonts/truetype/custom/arial.ttf",
+               "/usr/share/fonts/truetype/custom/arialbd.ttf",
+               "/usr/share/fonts/truetype/custom/simhei.ttf",
+               "C:\\Windows\\Fonts\\arial.ttf",
+               "C:\\Windows\\Fonts\\simhei.ttf"):
+        try:
+            if os.path.exists(_p):
+                _fm.fontManager.addfont(_p)
+        except Exception:
+            pass
+    _plt.rcParams["font.family"] = "sans-serif"
+    _plt.rcParams["font.sans-serif"] = ["Arial", "SimHei"]
+    _plt.rcParams["axes.unicode_minus"] = False
 
 
+
+
+
+def _categorical_cmap(n_cats):
+    """Return a list of n distinct colors (no repeats up to 60, then HSV cycle).
+
+    tab20/tab20b/tab20c each have 20 colors -> 60 distinct before cycling.
+    For >60 categories, fall back to HSV with golden-ratio spacing (visually distinct).
+    """
+    import matplotlib.pyplot as plt
+    if n_cats <= 60:
+        cols = []
+        for name in ("tab20", "tab20b", "tab20c"):
+            cols.extend(plt.get_cmap(name).colors)
+        return cols[:n_cats]
+    # >60: HSV golden-ratio spacing
+    import colorsys
+    phi = 0.618033988749895
+    cols = []
+    for i in range(n_cats):
+        h = (i * phi) % 1.0
+        r, g, b = colorsys.hsv_to_rgb(h, 0.85, 0.85)
+        cols.append((r, g, b))
+    return cols
+
+
+def detect_species(adata, n_marker=6):
+    """Detect species from gene symbols in an AnnData object.
+
+    Returns 'mouse' or 'human'. Signals (priority):
+      1. Mitochondrial gene prefix: mt- (mouse, lowercase) vs MT- (human, uppercase)
+      2. Known marker gene hit rate (mouse vs human symbols)
+      3. TitleCase fraction: >80% of genes TitleCase (Xkr4-like) -> mouse;
+         all-uppercase symbols (XKR4-like) -> human
+    If ambiguous, returns 'unknown' (LLM should decide).
+    """
+    import numpy as np
+    genes = list(adata.var_names)
+    if not genes:
+        return "unknown"
+
+    # Signal 1: mitochondrial prefix
+    mt_mouse = sum(1 for g in genes if g.startswith("mt-"))
+    mt_human = sum(1 for g in genes if g.startswith("MT-"))
+    if mt_mouse > 0 and mt_human == 0:
+        return "mouse"
+    if mt_human > 0 and mt_mouse == 0:
+        return "human"
+
+    # Signal 2: known markers (mouse symbol style vs human)
+    markers = {
+        "mouse": ["Tgfbr1", "Bmp2", "Cdh1", "App", "Ptprc", "Cd3d", "Lyz1", "Defa21"],
+        "human": ["TGFBR1", "BMP2", "CDH1", "APP", "PTPRC", "CD3D", "LYZ", "DEFA5"],
+    }
+    gene_set = set(genes)
+    hits = {sp: sum(1 for m in ms if m in gene_set) for sp, ms in markers.items()}
+    if hits["mouse"] >= 2 and hits["human"] == 0:
+        return "mouse"
+    if hits["human"] >= 2 and hits["mouse"] == 0:
+        return "human"
+
+    # Signal 3: TitleCase fraction
+    title = sum(1 for g in genes if g[:1].isupper() and not g.isupper())
+    upper = sum(1 for g in genes if g.isupper())
+    if title > 0 and upper > 0:
+        frac = title / (title + upper)
+        if frac > 0.8:
+            return "mouse"
+        if frac < 0.2:
+            return "human"
+    return "unknown"
 
 
 def _spatial_scatter(adata, color, ax, title, cmap="viridis"):
@@ -82,13 +170,21 @@ def _spatial_scatter(adata, color, ax, title, cmap="viridis"):
 
             cats = vals.cat.categories if pd.api.types.is_categorical_dtype(vals) else pd.unique(vals)
 
-            cmap_obj = plt.get_cmap("tab20", len(cats))
+            # FIX 2026-08-26: 分类配色不重复 (tab20 只有 20 色, >20 类会循环重复)
+            cmap_colors = _categorical_cmap(len(cats))
 
-            color_map = {c: cmap_obj(i) for i, c in enumerate(cats)}
+            color_map = {c: cmap_colors[i] for i, c in enumerate(cats)}
 
             colors = [color_map.get(v, "grey") for v in vals]
 
             scatter = ax.scatter(x, y, c=colors, s=8, alpha=0.8)
+
+            handles = [plt.Line2D([0], [0], marker="o", color="w",
+                                  markerfacecolor=color_map[c], markersize=6,
+                                  label=str(c)) for c in cats]
+
+            ax.legend(handles=handles, bbox_to_anchor=(1.05, 1), loc="upper left",
+                      fontsize=7, frameon=False, title=color, title_fontsize=8)
 
         else:
 
@@ -822,7 +918,7 @@ def cluster_spatial_data(
 
     n_pcs: int = 30,
 
-    resolution: float = 1.0,
+    resolution: float = None,
 
 ) -> str:
 
@@ -925,147 +1021,200 @@ def cluster_spatial_data(
 
 
 def identify_spatial_domains(
-
     adata_path: str,
-
     output_path: str = "./visium_domains.h5ad",
-
     plot_path: str = None,
-
-    resolution: float = 1.0,
-
-    n_neighs: int = 6,
-
+    resolution: float = None,
+    n_neighs: int = None,
+    n_pcs: int = None,
+    n_top_genes: int = None,
+    min_domains: int = 5,
+    max_domains: int = 25,
 ) -> str:
+    """Identify spatial domains from gene expression (generalizable).
 
-    """Identify spatial domains in 10x Visium data using spatial neighborhood graph.
+    FIX 2026-08-26: 原实现只用空间坐标 6-近邻图 + 固定 resolution=1.0 跑 Leiden,
+    在分割后细胞级数据 (数十万细胞) 上会严重过分割 (实测 308996 细胞 -> 237 个域).
+    该设计不可泛化: 不同平台 (spot/bin/cell) 的图规模差异巨大, 固定参数必然失效.
 
-
-
-    Builds a spatial neighborhood graph from spot coordinates (squidpy) and
-
-    runs Leiden clustering on that graph, producing spatially coherent domains.
-
-    Plots the spatial scatter colored by domain.
-
-
+    新实现 (scanpy 标准流程, 数据驱动):
+      1. 基因表达驱动 (scanpy 官方标准流程): HVG -> normalize+log1p(若 counts)
+         -> scale(小数据) -> PCA -> KNN 邻域图 -> Leiden (flavor=igraph)
+         (分割后细胞级数据按 scRNA 处理, 10x 官方指南)
+      2. 参数决策: resolution 默认 1.0 (官方标准); 由调用方 LLM 根据数据画像
+         判断后显式传参覆盖. 不做参数自动搜索 (LLM-in-the-loop 原则 2026-08-26).
+      3. 兼容 spot/bin/cell 任意规模: PCA 用 arpack (可处理稀疏大矩阵),
+         大数据跳过 scale 避免稠密化 (30 万细胞实测).
 
     Args:
-
-        adata_path: Path to the normalized AnnData (h5ad) file with spatial coordinates.
-
+        adata_path: Path to the normalized AnnData (h5ad).
         output_path: Path where the domain-annotated AnnData will be saved.
-
         plot_path: Path where the domain plot will be saved.
-
-        resolution: Leiden clustering resolution for domain detection.
-
-        n_neighs: Number of spatial neighbors per spot.
-
-
+        resolution: Leiden resolution. If None, default 1.0 (LLM may override).
+        n_neighs: KNN neighbors for expression graph. If None, data-driven
+                  (min(15, max(5, n_obs//1000))).
+        n_pcs: Number of PCA components. If None, min(30, n_obs-1, n_vars-1).
+        n_top_genes: Number of HVGs for PCA. If None, min(2000, n_vars).
+        min_domains, max_domains: (kept for API compat; no auto-search).
 
     Returns:
-
         str: Step-by-step log describing the spatial domain result.
-
     """
-
-    try:
-
-        import squidpy as sq
-
-    except ImportError:
-
-        return "Error: squidpy is required for spatial domain detection. Install with: pip install squidpy"
-
-
+    import scanpy as sc
+    import numpy as np
 
     steps = []
-
     adata = sc.read_h5ad(adata_path)
-
     steps.append(f"Loaded AnnData: {adata.shape[0]} spots x {adata.shape[1]} genes")
 
-
-
     if "spatial" not in adata.obsm:
-
         return "Error: no spatial coordinates found in adata.obsm['spatial']; run load_visium_data first"
 
+    # FIX 2026-08-26: 数据规模自适应默认 (能算的直接算, LLM 可显式覆盖)
+    n_obs, n_vars = adata.shape
+    if n_top_genes is None:
+        n_top_genes = min(2000, n_vars)
+    if n_pcs is None:
+        n_pcs = min(30, n_obs - 1, n_vars - 1)
+    if n_neighs is None:
+        n_neighs = min(15, max(5, n_obs // 1000))
+    steps.append(
+        f"Data-driven params: n_top_genes={n_top_genes}, n_pcs={n_pcs}, "
+        f"k={n_neighs} (LLM may override)")
 
+    # 1. 基因表达驱动: HVG -> scale -> PCA
+    if "spatial_domain" in adata.obs.columns:
+        adata.obs = adata.obs.drop(columns=["spatial_domain"])
 
-    sq.gr.spatial_neighbors(adata, n_neighs=n_neighs, coord_type="generic")
+    # FIX 2026-08-26: 输入数据可能是 counts (整数, max 可达数百) 或 log-normalized.
+    # scanpy flavor="seurat" 会对输入做 expm1 (假设 log 数据), counts 会溢出 inf 报错.
+    # 泛化方案: 自动检测 counts -> 用 flavor="seurat_v3" (专为 counts 设计);
+    # log 数据 -> 用 flavor="seurat". 同时防御非有限值.
+    import numpy as _np
+    _x = adata.X
+    if hasattr(_x, "data"):  # sparse
+        _d = _x.data
+        _is_counts = _d.size > 0 and bool(_np.allclose(_d, _np.round(_d))) and _d.min() >= 0
+    else:
+        _is_counts = bool(_np.allclose(_x, _np.round(_x))) and _x.min() >= 0
+    # counts -> flavor="cell_ranger" (无额外依赖, scanpy 内置均值-方差归一化);
+    # log 数据 -> flavor="seurat" (依赖 scikit-misc 的 seurat_v3 会额外装包, 不用).
+    _flavor = "cell_ranger" if _is_counts else "seurat"
+    print(f"  HVG flavor: {_flavor} (data {'counts' if _is_counts else 'log'})")
 
-    steps.append(f"Built spatial neighborhood graph with {n_neighs} neighbors per spot")
+    if adata.n_vars > 500:
+        sc.pp.highly_variable_genes(adata, n_top_genes=min(n_top_genes, adata.n_vars),
+                                    flavor=_flavor, subset=False)
+        hv = adata.var["highly_variable"].values
+        adata_tmp = adata[:, hv].copy()
+        steps.append(f"Selected {int(hv.sum())} HVGs")
+    else:
+        adata_tmp = adata.copy()
+        steps.append("Few genes, skipped HVG selection")
 
+    # FIX 2026-08-26: sc.pp.scale 会把稀疏矩阵稠密化 (30万x2000 = 6亿元素),
+    # 导致 30 万细胞数据卡死. 对大规模数据跳过 scale (counts 用 log1p 后 PCA 已足够,
+    # scanpy 社区标准: normalize_total + log1p 后直接 PCA).
+    # 小数据 (<10万) 仍做 scale 保证与标准流程一致.
+    # 另外: 输入可能是 counts (整数), PCA 前需 log1p (scanpy 对非 log 数据的要求).
+    if _is_counts:
+        sc.pp.normalize_total(adata_tmp, target_sum=1e4)
+        sc.pp.log1p(adata_tmp)
+        steps.append("Normalized + log1p counts before PCA")
+    if adata_tmp.shape[0] <= 100000:
+        sc.pp.scale(adata_tmp, max_value=10)
+    else:
+        steps.append("Skip scale for large data (avoid densification)")
+    n_comps = min(n_pcs, adata_tmp.shape[0] - 1, adata_tmp.shape[1] - 1)
+    sc.tl.pca(adata_tmp, n_comps=n_comps, svd_solver="arpack")
+    adata.obsm["X_pca_domain"] = adata_tmp.obsm["X_pca"]
+    steps.append(f"PCA ({n_comps} components) on expression")
 
+    # 2. 表达邻域图 (scanpy 标准 KNN, k 来自数据规模自适应)
+    sc.pp.neighbors(adata, n_neighbors=n_neighs, n_pcs=n_comps,
+                    use_rep="X_pca_domain", key_added="domain_neighbors")
+    steps.append(f"Expression KNN graph (k={n_neighs})")
 
-    # Leiden on the spatial graph (squidpy stores it in obsp["spatial_connectivities"])
-
-    try:
-
-        sc.tl.leiden(adata, resolution=resolution, key_added="spatial_domain",
-
-                     neighbors_key="spatial_neighbors")
-
-    except KeyError:
-
-        # Fallback: pass the spatial connectivity matrix directly
-
-        sc.tl.leiden(adata, resolution=resolution, key_added="spatial_domain",
-
-                     obsp="spatial_connectivities")
-
+    # 3. Leiden (官方标准: 默认 resolution=1.0; 用户显式传参才覆盖)
+    if resolution is None:
+        resolution = 1.0
+    # FIX 2026-08-26: 默认 leidenalg 后端在 30 万细胞图上卡死 (30+ min 无结果),
+    # igraph flavor 25 秒完成 (scanpy 官方推荐的新后端, 见 FutureWarning).
+    sc.tl.leiden(adata, resolution=resolution, key_added="spatial_domain",
+                 neighbors_key="domain_neighbors", flavor="igraph",
+                 n_iterations=2, directed=False)
     n_domains = adata.obs["spatial_domain"].nunique()
+    steps.append(f"Spatial domain clustering found {n_domains} domains (res={resolution})")
 
-    steps.append(f"Spatial domain clustering found {n_domains} domains")
-
-
+    # 5. Domain 注释 (官方标准: 聚类后必须给每个 domain 生物学证据, 供 LLM 命名)
+    #    (a) marker 基因: 每个 domain 相对其他 domain 的差异表达 (rank_genes_groups)
+    #    (b) 细胞类型组成: 每个 domain 内 cell_type 比例 (cross-tab)
+    #    输出: domain_annotation.csv + 打印摘要. LLM 读这些证据给 domain 贴标签
+    #    (隐窝/绒毛/肌肉层等), 不在代码里写死命名.
+    try:
+        if adata.n_vars <= 100000:
+            # 30 万细胞 rank_genes_groups 很慢, 用 downsample (每 domain 最多 5000)
+            n_per_dom = adata.obs.groupby("spatial_domain", observed=True).size()
+            max_per = int(n_per_dom.min())
+            sub_idx = adata.obs.groupby("spatial_domain", observed=True).apply(
+                lambda x: x.sample(min(len(x), 5000), random_state=0)
+            ).index.get_level_values(-1)
+            adata_sub = adata[sub_idx].copy()
+            sc.tl.rank_genes_groups(adata_sub, "spatial_domain", method="wilcoxon",
+                                    n_genes=10)
+            # 汇总: 每 domain top marker + 细胞类型组成
+            import pandas as pd
+            rows = []
+            dom_cats = list(adata.obs["spatial_domain"].astype("category").cat.categories)
+            for d in dom_cats:
+                # marker genes
+                try:
+                    de = adata_sub.uns["rank_genes_groups"]
+                    idx = list(de["names"].dtype.names).index(str(d))
+                    genes = list(de["names"][str(d)][:10])
+                    lfc = [round(float(x), 3) for x in de["logfoldchanges"][str(d)][:10]]
+                    marker_str = "; ".join(f"{g}({l})" for g, l in zip(genes, lfc))
+                except Exception:
+                    marker_str = ""
+                # cell type composition
+                if "cell_type" in adata.obs.columns:
+                    comp = adata.obs.loc[adata.obs["spatial_domain"] == d, "cell_type"] \
+                        .value_counts(normalize=True).head(3)
+                    comp_str = "; ".join(f"{k}:{v:.0%}" for k, v in comp.items())
+                else:
+                    comp_str = "N/A (no cell_type)"
+                rows.append({"domain": d, "n_cells": int(n_per_dom.get(d, 0)),
+                             "top_markers": marker_str, "cell_types": comp_str})
+            df = pd.DataFrame(rows)
+            ann_path = os.path.splitext(output_path)[0] + "_annotation.csv"
+            df.to_csv(ann_path, index=False)
+            steps.append(f"Domain annotation saved to {ann_path}")
+            steps.append("Domain annotation (LLM uses these to name domains):")
+            for _, r in df.iterrows():
+                steps.append(f"  D{r['domain']}: n={r['n_cells']} | "
+                             f"markers={r['top_markers'][:80]} | "
+                             f"cells={r['cell_types'][:60]}")
+        else:
+            steps.append("Skip domain annotation (>100k vars, too heavy)")
+    except Exception as e:
+        steps.append(f"Domain annotation skipped (error: {str(e)[:100]})")
 
     adata.write(output_path, compression="lzf")
-
     steps.append(f"Saved domain-annotated AnnData to {output_path}")
 
-
-
-    # Plot domains on spatial coordinates
-
+    # 4. Plot domains on spatial coordinates
     _plot_setup(os.path.dirname(output_path) or ".")
-
     import matplotlib.pyplot as plt
 
-
-
     if plot_path is None:
-
         plot_path = os.path.splitext(output_path)[0] + "_domains.png"
-
     fig, ax = plt.subplots(1, 1, figsize=(7, 6))
-
     _spatial_scatter(adata, "spatial_domain", ax, "Spatial domains")
-
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
-
     plt.close(fig)
-
     steps.append(f"Spatial domain plot saved to {plot_path}")
 
-
-
     return "\n".join(steps)
-
-
-
-
-
-# ============================================================================
-
-# Stage 3: Spatially variable genes
-
-# ============================================================================
-
-
-
 
 
 def find_spatially_variable_genes(
@@ -1076,7 +1225,7 @@ def find_spatially_variable_genes(
 
     plot_path: str = None,
 
-    n_top_genes: int = 100,
+    n_top_genes: int = None,
 
     genes_to_plot: list = None,
 
@@ -1144,14 +1293,16 @@ def find_spatially_variable_genes(
 
         return "Error: no spatial coordinates found in adata.obsm['spatial']; run load_visium_data first"
 
+    # FIX 2026-08-26: n_top_genes 数据驱动 (LLM 可覆盖)
+    if n_top_genes is None:
+        n_top_genes = min(100, adata.n_vars)
+
     if "spatial_neighbors" not in adata.uns and "spatial_domain" not in adata.obs:
+        _k = min(15, max(5, adata.shape[0] // 1000))
+        sq.gr.spatial_neighbors(adata, n_neighs=_k, coord_type="generic")
+        steps.append(f"Built spatial neighborhood graph (k={_k})")
 
-        sq.gr.spatial_neighbors(adata, n_neighs=6, coord_type="generic")
-
-        steps.append("Built spatial neighborhood graph")
-
-
-
+    _n_genes = min(n_top_genes, adata.n_vars)
     sq.gr.spatial_autocorr(
 
         adata,
@@ -1160,7 +1311,7 @@ def find_spatially_variable_genes(
 
         n_jobs=n_jobs,
 
-        genes=adata.var_names[:2000],
+        genes=adata.var_names[:_n_genes],
 
     )
 
@@ -1959,7 +2110,7 @@ def infer_spatial_cell_communication(
 
     r_script_path: str = "Rscript",
 
-    species: str = "human",
+    species: str = None,
 
 ) -> str:
 
@@ -2018,6 +2169,18 @@ def infer_spatial_cell_communication(
     steps = []
 
     steps.append(f"CellChat spatial communication inference: {st_h5ad}")
+
+    # FIX 2026-08-26: species 不写死, 自动检测 (LLM-in-the-loop; 检测失败时 LLM 传参)
+    if species is None:
+        import scanpy as sc
+        _tmp = sc.read_h5ad(st_h5ad)
+        species = detect_species(_tmp)
+        print(f"  species auto-detected: {species}")
+        steps.append(f"species auto-detected: {species}")
+        if species == "unknown":
+            raise ValueError(
+                "Could not auto-detect species from gene symbols. "
+                "Pass species='human' or 'mouse' explicitly (LLM decision).")
 
 
 
@@ -2160,6 +2323,8 @@ cellchat <- createCellChat(object = obj, group.by = '{cell_type_key}')
 
 # Set ligand-receptor database
 
+# 官方标准用法 (CellChat tutorial): CellChatDB <- CellChatDB.mouse; cellchat@DB <- CellChatDB
+# 不需要 data()/invisible()——lazy-load 由 CellChat 内部处理
 CellChatDB <- CellChatDB.{species}
 
 cellchat@DB <- CellChatDB
@@ -2179,8 +2344,10 @@ cellchat <- identifyOverExpressedInteractions(cellchat)
 
 
 # Inference
-
-cellchat <- computeCommunProb(cellchat, type = "triMean")
+# type="truncatedMean", trim=0.1: Visium HD 基因检出率低 (稀疏), triMean(25%截断)会把
+# 低检出率的信号配体 (WNT/BMP/NOTCH/EGF) 平均表达算成 0, 导致检测不到.
+# 用 10% 截断均值更宽松, 官方教程推荐处理稀疏数据时使用.
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1)
 
 cellchat <- filterCommunication(cellchat, min.cells = 10)
 
@@ -2306,7 +2473,7 @@ def spatial_neighborhood_enrichment(
 
     plot_path: str = None,
 
-    n_neighs: int = 6,
+    n_neighs: int = None,
 
 ) -> str:
 
@@ -2372,7 +2539,9 @@ def spatial_neighborhood_enrichment(
 
         return "Error: no spatial coordinates found; run load_visium_data first"
 
-
+    # FIX 2026-08-26: n_neighs 数据驱动 (LLM 可覆盖)
+    if n_neighs is None:
+        n_neighs = min(15, max(5, adata.shape[0] // 1000))
 
     sq.gr.spatial_neighbors(adata, n_neighs=n_neighs, coord_type="generic")
 

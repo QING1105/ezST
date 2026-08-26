@@ -13,3 +13,13 @@ python-igraph
 harmonypy
 tqdm
 joblib
+
+# Visium HD 分割依赖（segment_cells / StarDist 核分割）
+# GPU 加速: 有 NVIDIA GPU 时建议装 GPU 版 tensorflow:
+#   pip install "tensorflow[and-cuda]"   (TF>=2.16, 自动带 CUDA/cuDNN)
+# 或 CPU 版: pip install tensorflow
+# 代码会自动探测 GPU, 不可用则回退 CPU, 无需手动配置。
+stardist>=0.9
+tensorflow>=2.16
+tifffile
+csbdeep

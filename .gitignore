@@ -6,6 +6,11 @@ __pycache__/
 build/
 dist/
 
+# 备份文件（不提交）
+*.bak
+*.bak_*
+*.bak[0-9]*
+
 # 环境
 .env
 .venv/

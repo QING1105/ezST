@@ -1,6 +1,17 @@
-# Spatial Transcriptomics (10x Visium)
+# Spatial Transcriptomics (10x Visium / Visium HD / Xenium)
 
-Staged 10x Visium spatial transcriptomics analysis for Codex, with human review gates at every stage.
+Staged spatial transcriptomics analysis for Codex, with human review gates at every stage.
+
+## Supported platforms & branches
+
+| Platform | Skill | Analysis unit | Branch |
+|:--|:--|:--|:--|
+| 10x Visium (v1/v2) | `spatial-transcriptomics` (classic) | spot | load+QC → normalize+cluster → domains+SVG → **deconvolve** → neighborhood+CellChat |
+| **10x Visium HD** | `spatial-visium-hd` | **single cell** (after segmentation) | segment (bin2cell / Proseg) → QC → **annotate (label transfer)** → domains → neighborhood+CellChat |
+| 10x Xenium | `spatial-xenium` | single cell (panel genes) | annotate → domains → neighborhood+CellChat |
+| Stereo-seq / generic | `spatial-atera` | spot/bin/cell | generic branch (data-driven params) |
+
+> Visium HD note: after segmentation the data is single-cell level, so it is processed **as scRNA-seq** (annotation via label transfer), **not deconvolved**. See `spatial-visium-hd/SKILL.md`.
 
 ## Skills included
 
@@ -10,6 +21,14 @@ Staged 10x Visium spatial transcriptomics analysis for Codex, with human review 
 - **spatial-s3-domains-svg** — spatial domains, Moran's I SVG detection
 - **spatial-s4-deconvolve** — DestVI / SPOTlight cell-type deconvolution
 - **spatial-s5-downstream** — neighborhood enrichment + CellChat communication
+- **spatial-visium-hd** — Visium HD branch: bin2cell / Proseg segmentation → single-cell downstream
+- **spatial-xenium** — Xenium branch (panel genes)
+- **spatial-atera / spatial-downstream** — generic platform branches
+
+## Changelog
+
+- **0823**: fixed a bug in the uploaded content; re-pushed to git.
+- **0826**: added Visium HD support — two segmentation methods (10x official bin2cell and Proseg); downstream refactored to LLM-in-the-loop decisions (auto species detection, data-driven parameters). See segmentation comparison figures in the main README.
 
 ## Example prompts
 
@@ -24,3 +43,8 @@ Deconvolve my Visium spatial data at '/data/gastric/proj/results/01_loading/samp
 ```text
 Run cell-cell communication analysis on my clustered Visium data at '/data/gastric/proj/results/04_clustering/sample_clustered.h5ad'.
 ```
+
+```text
+Analyze my Visium HD sample at '/data/visium_hd/' — segment cells (bin2cell), annotate with Haber 2017 reference, then run domains and CellChat.
+```
+

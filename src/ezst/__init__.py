@@ -26,3 +26,12 @@ from .visium import (  # noqa: F401
     spatial_neighborhood_enrichment,
     infer_spatial_cell_communication,
 )
+from .visium_new_platforms import (  # noqa: F401
+    load_visium_hd,
+    segment_cells,
+    bin_to_cell,
+    run_proseg,
+    load_xenium,
+    load_atera,
+    plot_cells_crop,
+)
