@@ -20,7 +20,7 @@ if errorlevel 1 (
 
 REM 2. pip 安装
 echo [1/2] 安装 ezST (pip)...
-pip install -e "%REPO_DIR%"
+python -m pip install -e "%REPO_DIR%"
 if errorlevel 1 (
     echo [错误] pip 安装失败
     pause
@@ -34,6 +34,7 @@ if errorlevel 1 (
     echo [警告] 未检测到 R。S4/S5 需要 R ^>= 4.3，请安装后运行: Rscript install\install_r_packages.R
 ) else (
     Rscript "%SCRIPT_DIR%install_r_packages.R"
+    if errorlevel 1 exit /b 1
 )
 
 echo.

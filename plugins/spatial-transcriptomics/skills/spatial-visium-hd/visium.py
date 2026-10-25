@@ -42,6 +42,47 @@ import scanpy as sc
 
 
 
+
+def _run_r_script(executable, script, output_dir):
+    """Keep R diagnostics on disk while the subprocess is running."""
+    import subprocess
+    from pathlib import Path
+    stdout_path = Path(output_dir) / "r_stdout.log"
+    stderr_path = Path(output_dir) / "r_stderr.log"
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+        result = subprocess.run([executable, script], stdout=stdout, stderr=stderr, timeout=3600)
+    result.stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+    result.stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+    return result
+
+
+def _r_literal(value):
+    """Encode a path or label as a quoted R string, including Windows paths."""
+    import json
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _raw_count_adata(adata, source):
+    """Choose preserved count data and validate the count-model input."""
+    from scipy.sparse import issparse
+    candidates = []
+    if "counts" in adata.layers:
+        candidate = adata.copy()
+        candidate.X = adata.layers["counts"].copy()
+        candidates.append(candidate)
+    if adata.raw is not None:
+        candidate = adata.raw.to_adata()
+        candidate.uns.pop("log1p", None)
+        candidates.append(candidate)
+    if "log1p" not in adata.uns:
+        candidates.append(adata.copy())
+    for candidate in candidates:
+        values = candidate.X.data if issparse(candidate.X) else np.asarray(candidate.X).ravel()
+        if np.isfinite(values).all() and (values >= 0).all() and np.allclose(values, np.rint(values), rtol=0, atol=1e-6):
+            return candidate
+    raise ValueError(f"{source}: provide nonnegative integer raw counts in layers['counts'], raw.X, or X")
+
+
 def _plot_setup(output_dir: str) -> None:
 
     """Ensure matplotlib uses the Agg backend and the output dir exists."""
@@ -68,8 +109,7 @@ def _plot_setup(output_dir: str) -> None:
                 _fm.fontManager.addfont(_p)
         except Exception:
             pass
-    _plt.rcParams["font.family"] = "sans-serif"
-    _plt.rcParams["font.sans-serif"] = ["Arial", "SimHei"]
+    _plt.rcParams["font.family"] = ["Arial", "SimHei"]
     _plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -194,7 +234,9 @@ def _spatial_scatter(adata, color, ax, title, cmap="viridis"):
 
     elif color in adata.var_names:
 
-        scatter = ax.scatter(x, y, c=adata[:, color].X.toarray().flatten(), s=8, alpha=0.8, cmap=cmap)
+        values = adata[:, color].X
+        values = values.toarray() if hasattr(values, "toarray") else np.asarray(values)
+        scatter = ax.scatter(x, y, c=values.ravel(), s=8, alpha=0.8, cmap=cmap)
 
         plt.colorbar(scatter, ax=ax, fraction=0.046)
 
@@ -320,7 +362,7 @@ def load_visium_data(
 
         if "spatial" not in adata.obsm:
 
-            for xk, yk in (("pixel_x", "pixel_y"), ("pxl_row_in_fullres", "pxl_col_in_fullres"),
+            for xk, yk in (("pixel_x", "pixel_y"), ("pxl_col_in_fullres", "pxl_row_in_fullres"),
 
                            ("x", "y"), ("array_x", "array_y")):
 
@@ -346,47 +388,24 @@ def load_visium_data(
 
         bar = os.path.join(counts_file, "barcodes.tsv")
 
-        for f in (mtx, feat, bar):
-
-            if not os.path.exists(f):
-
-                f_gz = f + ".gz"
-
-                if os.path.exists(f_gz):
-
-                    f = f_gz
-
+        paths = [mtx, feat, bar]
+        for i, path in enumerate(paths):
+            if not os.path.exists(path):
+                if os.path.exists(path + ".gz"):
+                    paths[i] = path + ".gz"
                 else:
-
-                    return f"Error: expected 10x file not found: {f}"
-
-        if mtx.endswith(".gz"):
-
-            adata = sc.read_10x_mtx(counts_file, var_names="gene_symbols", make_unique=True)
-
-        else:
-
-            counts = sio.mmread(mtx).T.tocsr()
-
-            ft = pd.read_csv(feat, sep="\t", header=None)
-
-            bc = pd.read_csv(bar, sep="\t", header=None)
-
-            adata = sc.AnnData(X=counts)
-
-            # 10x 格式规范: features.tsv 首列是 gene id, 第二列是 gene symbol(若有)
-
-            gene_col = 1 if ft.shape[1] >= 2 and ft.iloc[:, 1].astype(str).str.match(r"[A-Za-z]").all() else 0
-
-            adata.var_names = ft.iloc[:, gene_col].astype(str).values
-
-            adata.var_names_make_unique()
-
-            # 10x 格式规范: barcodes.tsv 单列是 barcode
-
-            adata.obs_names = bc.iloc[:, 0].astype(str).values
-
-            adata.obs_names_make_unique()
+                    raise FileNotFoundError(path)
+        mtx, feat, bar = paths
+        import gzip
+        with (gzip.open(mtx, "rb") if mtx.endswith(".gz") else open(mtx, "rb")) as handle:
+            counts = sio.mmread(handle).T.tocsr()
+        ft = pd.read_csv(feat, sep="\t", header=None)
+        bc = pd.read_csv(bar, sep="\t", header=None)
+        adata = sc.AnnData(X=counts)
+        adata.var_names = ft.iloc[:, 1 if ft.shape[1] >= 2 else 0].astype(str).values
+        adata.var_names_make_unique()
+        adata.obs_names = bc.iloc[:, 0].astype(str).values
+        adata.obs_names_make_unique()
 
         steps.append(f"Loaded 10x matrix: {adata.shape[0]} spots x {adata.shape[1]} genes")
 
@@ -652,7 +671,7 @@ def filter_visium_spots(
 
 
 
-    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
 
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, inplace=True)
 
@@ -782,6 +801,8 @@ def normalize_visium(
 
     # Keep raw counts in .raw for downstream deconvolution tools
 
+    adata = _raw_count_adata(adata, "normalization input")
+    adata.layers["counts"] = adata.X.copy()
     adata.raw = adata.copy()
 
     steps.append("Stored raw counts in adata.raw")
@@ -802,25 +823,18 @@ def normalize_visium(
 
         raw_adata = adata.raw.to_adata()
 
+        flavor = "seurat_v3"
         try:
-
-            sc.pp.highly_variable_genes(raw_adata, n_top_genes=n_top_genes, flavor="seurat_v3")
-
-            adata.var["highly_variable"] = raw_adata.var["highly_variable"]
-
-            adata.var["means"] = raw_adata.var["means"]
-
-            adata.var["dispersions_norm"] = raw_adata.var["dispersions_norm"]
-
-        except Exception:
-
-            sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor="seurat")
-
+            sc.pp.highly_variable_genes(raw_adata, n_top_genes=n_top_genes, flavor=flavor)
+            for column in ("highly_variable", "highly_variable_rank", "means", "variances", "variances_norm"):
+                adata.var[column] = raw_adata.var[column]
+        except (ImportError, ValueError) as exc:
+            flavor = "seurat"
+            steps.append(f"seurat_v3 unavailable ({exc}); using seurat")
+            sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor=flavor)
+        adata.uns["hvg_method"] = flavor
         n_hvg = int(adata.var["highly_variable"].sum())
-
-        steps.append(f"Selected {n_hvg} highly variable genes (seurat_v3, top {n_top_genes})")
-
-
+        steps.append(f"Selected {n_hvg} highly variable genes ({flavor}, top {n_top_genes})")
 
     adata.write(output_path, compression="lzf")
 
@@ -844,23 +858,24 @@ def normalize_visium(
 
         fig, ax = plt.subplots(1, 1, figsize=(6, 5))
 
-        hvg_df = adata.var[["means", "dispersions_norm", "highly_variable"]].copy()
+        metric = "variances_norm" if adata.uns["hvg_method"] == "seurat_v3" else "dispersions_norm"
+        hvg_df = adata.var[["means", metric, "highly_variable"]].copy()
 
         ax.scatter(hvg_df.loc[~hvg_df["highly_variable"], "means"],
 
-                   hvg_df.loc[~hvg_df["highly_variable"], "dispersions_norm"],
+                   hvg_df.loc[~hvg_df["highly_variable"], metric],
 
                    s=5, c="lightgrey", label="not HVG")
 
         ax.scatter(hvg_df.loc[hvg_df["highly_variable"], "means"],
 
-                   hvg_df.loc[hvg_df["highly_variable"], "dispersions_norm"],
+                   hvg_df.loc[hvg_df["highly_variable"], metric],
 
                    s=5, c="red", label="HVG")
 
         ax.set_xlabel("mean expression")
 
-        ax.set_ylabel("normalized dispersion")
+        ax.set_ylabel("normalized variance" if metric == "variances_norm" else "normalized dispersion")
 
         ax.set_title("Highly variable genes")
 
@@ -876,13 +891,13 @@ def normalize_visium(
 
         fig, ax = plt.subplots(1, 1, figsize=(6, 5))
 
-        ax.hist(adata.obs["total_counts"], bins=50, color="steelblue")
+        ax.hist(np.asarray(adata.layers["counts"].sum(axis=1)).ravel(), bins=50, color="steelblue")
 
-        ax.set_xlabel("total_counts (normalized)")
+        ax.set_xlabel("total_counts (raw)")
 
         ax.set_ylabel("spots")
 
-        ax.set_title("Normalized library size distribution")
+        ax.set_title("Raw library size distribution")
 
         fig.savefig(plot_path, dpi=150, bbox_inches="tight")
 
@@ -964,6 +979,12 @@ def cluster_spatial_data(
 
 
 
+    if resolution is None:
+        resolution = 1.0
+    n_features = int(adata.var["highly_variable"].sum()) if "highly_variable" in adata.var else adata.n_vars
+    n_pcs = min(n_pcs, adata.n_obs - 1, n_features - 1)
+    if n_pcs < 1:
+        raise ValueError("PCA requires at least two observations and two selected genes")
     sc.pp.pca(adata, n_comps=n_pcs)
 
     steps.append(f"Computed PCA with {n_pcs} components")
@@ -1030,8 +1051,14 @@ def identify_spatial_domains(
     n_top_genes: int = None,
     min_domains: int = 5,
     max_domains: int = 25,
+    spatial_weight: float = 0.0,
 ) -> str:
-    """Identify spatial domains from gene expression (generalizable).
+    """Cluster expression, optionally blending a spatial nearest-neighbor graph.
+
+    ``spatial_weight=0`` preserves expression-only clustering; values in (0, 1]
+    mix symmetrically degree-normalized expression and spatial graphs as
+    (1 - weight) * expression + weight * spatial. Coordinates must share a
+    common physical scale across axes. The method is recorded in ``uns``.
 
     FIX 2026-08-26: 原实现只用空间坐标 6-近邻图 + 固定 resolution=1.0 跑 Leiden,
     在分割后细胞级数据 (数十万细胞) 上会严重过分割 (实测 308996 细胞 -> 237 个域).
@@ -1072,12 +1099,18 @@ def identify_spatial_domains(
 
     # FIX 2026-08-26: 数据规模自适应默认 (能算的直接算, LLM 可显式覆盖)
     n_obs, n_vars = adata.shape
+    if n_obs < 3 or n_vars < 2:
+        raise ValueError("Domain clustering requires at least 3 observations and 2 genes")
+    if not np.isfinite(spatial_weight) or not 0 <= spatial_weight <= 1:
+        raise ValueError("spatial_weight must be between 0 and 1")
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     if n_top_genes is None:
         n_top_genes = min(2000, n_vars)
     if n_pcs is None:
         n_pcs = min(30, n_obs - 1, n_vars - 1)
     if n_neighs is None:
         n_neighs = min(15, max(5, n_obs // 1000))
+    n_neighs = min(n_obs - 1, max(2, n_neighs))
     steps.append(
         f"Data-driven params: n_top_genes={n_top_genes}, n_pcs={n_pcs}, "
         f"k={n_neighs} (LLM may override)")
@@ -1092,7 +1125,8 @@ def identify_spatial_domains(
     # log 数据 -> 用 flavor="seurat". 同时防御非有限值.
     import numpy as _np
     _x = adata.X
-    if hasattr(_x, "data"):  # sparse
+    from scipy.sparse import issparse
+    if issparse(_x):
         _d = _x.data
         _is_counts = _d.size > 0 and bool(_np.allclose(_d, _np.round(_d))) and _d.min() >= 0
     else:
@@ -1135,6 +1169,34 @@ def identify_spatial_domains(
                     use_rep="X_pca_domain", key_added="domain_neighbors")
     steps.append(f"Expression KNN graph (k={n_neighs})")
 
+    method = "expression"
+    if spatial_weight > 0:
+        from scipy.sparse import diags
+        from sklearn.neighbors import kneighbors_graph
+        coords = np.asarray(adata.obsm["spatial"], dtype=float)
+        if coords.shape != (n_obs, 2) or not np.isfinite(coords).all():
+            raise ValueError("Spatial graph requires finite (n_obs, 2) coordinates")
+        spatial_graph = kneighbors_graph(coords, n_neighs, mode="connectivity",
+                                         include_self=False)
+        spatial_graph = spatial_graph.maximum(spatial_graph.T).tocsr()
+        def normalize_graph(graph):
+            degree = np.asarray(graph.sum(axis=1)).ravel()
+            inv = np.zeros_like(degree, dtype=float)
+            np.divide(1.0, np.sqrt(degree), out=inv, where=degree > 0)
+            d = diags(inv)
+            return (d @ graph @ d).tocsr()
+        graph_key = adata.uns["domain_neighbors"]["connectivities_key"]
+        adata.obsp["domain_expression_connectivities"] = adata.obsp[graph_key].copy()
+        adata.obsp["domain_spatial_connectivities"] = spatial_graph
+        adata.obsp[graph_key] = (
+            (1 - spatial_weight) * normalize_graph(adata.obsp[graph_key])
+            + spatial_weight * normalize_graph(spatial_graph))
+        method = "expression_spatial"
+        steps.append(f"Blended expression/spatial graph (spatial_weight={spatial_weight})")
+    adata.uns["domain_clustering"] = {"method": method,
+                                      "spatial_weight": float(spatial_weight),
+                                      "n_neighbors": int(n_neighs)}
+
     # 3. Leiden (官方标准: 默认 resolution=1.0; 用户显式传参才覆盖)
     if resolution is None:
         resolution = 1.0
@@ -1144,13 +1206,18 @@ def identify_spatial_domains(
                  neighbors_key="domain_neighbors", flavor="igraph",
                  n_iterations=2, directed=False)
     n_domains = adata.obs["spatial_domain"].nunique()
-    steps.append(f"Spatial domain clustering found {n_domains} domains (res={resolution})")
+    steps.append(f"{method} clustering found {n_domains} groups (res={resolution})")
 
-    # 5. Domain 注释 (官方标准: 聚类后必须给每个 domain 生物学证据, 供 LLM 命名)
-    #    (a) marker 基因: 每个 domain 相对其他 domain 的差异表达 (rank_genes_groups)
-    #    (b) 细胞类型组成: 每个 domain 内 cell_type 比例 (cross-tab)
-    #    输出: domain_annotation.csv + 打印摘要. LLM 读这些证据给 domain 贴标签
-    #    (隐窝/绒毛/肌肉层等), 不在代码里写死命名.
+    # 5. Domain 注释 (聚类后必须给每个 domain 生物学证据, 供 LLM 按命名规范命名)
+    #    代码产出证据 (annotation CSV): marker 基因 + 细胞类型组成.
+    #    LLM 命名流程 (5 步, 见 spatial-visium-hd/SKILL.md "空间域命名规范"):
+    #      1. 读 annotation CSV (marker 基因 + 细胞类型组成)
+    #      2. 判定组织类型: 从样本元数据/组织来源推断 (肠/肺/心/肝/癌)
+    #      3. 对照组织类型参考表选候选名: 优先解剖结构, 其次组织学特征
+    #      4. 用 marker 基因验证: 候选名必须有 marker 支持
+    #         (如"隐窝底部"需 Lgr5/Defa 等潘氏/干细胞 marker; "心肌层"需 TNNT2/ACTA2 等)
+    #      5. 输出统一格式: D{n} {结构名}({特征}); 证据不足 → D{n} 未命名(待定) 并说明缺什么证据
+    #    命名不在代码里写死 (避免 LLM 自由发挥, 统一走 5 步流程).
     try:
         if adata.n_vars <= 100000:
             # 30 万细胞 rank_genes_groups 很慢, 用 downsample (每 domain 最多 5000)
@@ -1160,8 +1227,11 @@ def identify_spatial_domains(
                 lambda x: x.sample(min(len(x), 5000), random_state=0)
             ).index.get_level_values(-1)
             adata_sub = adata[sub_idx].copy()
+            if _is_counts:
+                sc.pp.normalize_total(adata_sub, target_sum=1e4)
+                sc.pp.log1p(adata_sub)
             sc.tl.rank_genes_groups(adata_sub, "spatial_domain", method="wilcoxon",
-                                    n_genes=10)
+                                    n_genes=10, use_raw=False)
             # 汇总: 每 domain top marker + 细胞类型组成
             import pandas as pd
             rows = []
@@ -1209,7 +1279,7 @@ def identify_spatial_domains(
     if plot_path is None:
         plot_path = os.path.splitext(output_path)[0] + "_domains.png"
     fig, ax = plt.subplots(1, 1, figsize=(7, 6))
-    _spatial_scatter(adata, "spatial_domain", ax, "Spatial domains")
+    _spatial_scatter(adata, "spatial_domain", ax, f"Domains ({method})")
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     steps.append(f"Spatial domain plot saved to {plot_path}")
@@ -1297,7 +1367,7 @@ def find_spatially_variable_genes(
     if n_top_genes is None:
         n_top_genes = min(100, adata.n_vars)
 
-    if "spatial_neighbors" not in adata.uns and "spatial_domain" not in adata.obs:
+    if "spatial_connectivities" not in adata.obsp:
         _k = min(15, max(5, adata.shape[0] // 1000))
         sq.gr.spatial_neighbors(adata, n_neighs=_k, coord_type="generic")
         steps.append(f"Built spatial neighborhood graph (k={_k})")
@@ -1311,7 +1381,7 @@ def find_spatially_variable_genes(
 
         n_jobs=n_jobs,
 
-        genes=adata.var_names[:_n_genes],
+        genes=adata.var_names,
 
     )
 
@@ -1565,15 +1635,7 @@ def deconvolve_spatial_spotlight(
 
         """
 
-        ad = sc.read_h5ad(h5ad_path)
-
-        if ad.raw is not None:
-
-            ad = ad.raw.to_adata()
-
-        if "counts" in ad.layers:
-
-            ad.X = ad.layers["counts"].copy()
+        ad = _raw_count_adata(sc.read_h5ad(h5ad_path), "SPOTlight input")
 
         # Gene symbols for R-side filters (^Rp[l|s]|Mt etc.)
 
@@ -1595,7 +1657,8 @@ def deconvolve_spatial_spotlight(
 
         bar_path = os.path.join(bridge_dir, f"{prefix}_barcodes.tsv")
 
-        sio.mmwrite(mtx_path, ad.X.T.tocsr())
+        from scipy.sparse import csr_matrix
+        sio.mmwrite(mtx_path, csr_matrix(ad.X.T))
 
         with open(feat_path, "w") as f:
 
@@ -1665,15 +1728,15 @@ read10x <- function(mtx, feat, bar) {{
 
 
 
-ref <- read10x('{ref_mtx}', '{ref_feat}', '{ref_bar}')
+ref <- read10x({_r_literal(ref_mtx)}, {_r_literal(ref_feat)}, {_r_literal(ref_bar)})
 
-st <- read10x('{st_mtx}', '{st_feat}', '{st_bar}')
+st <- read10x({_r_literal(st_mtx)}, {_r_literal(st_feat)}, {_r_literal(st_bar)})
 
 
 
 # Cell-type labels
 
-ct <- read.delim('{bridge_dir}/ref_celltypes.tsv')
+ct <- read.delim({_r_literal(os.path.join(bridge_dir, "ref_celltypes.tsv"))})
 
 colData(ref)$cell_type <- ct[,1]
 
@@ -1763,13 +1826,13 @@ prop <- as.data.frame(res$mat)
 
 prop$barcode <- rownames(prop)
 
-write.csv(prop, file.path('{output_dir}', 'spotlight_proportions.csv'), row.names = FALSE)
+write.csv(prop, file.path({_r_literal(output_dir)}, 'spotlight_proportions.csv'), row.names = FALSE)
 
 cat("SPOTlight done\\n")
 
 """
 
-    with tempfile.NamedTemporaryFile(suffix=".R", mode="w", delete=False, dir=output_dir) as f:
+    with tempfile.NamedTemporaryFile(suffix=".R", mode="w", encoding="utf-8", delete=False, dir=output_dir) as f:
 
         f.write(r_script)
 
@@ -1779,17 +1842,7 @@ cat("SPOTlight done\\n")
 
     try:
 
-        result = subprocess.run(
-
-            [r_script_path, r_script_path_tmp],
-
-            capture_output=True,
-
-            text=True,
-
-            timeout=3600,
-
-        )
+        result = _run_r_script(r_script_path, r_script_path_tmp, output_dir)
 
         steps.append(f"R output: {result.stdout.strip()[:500]}")
 
@@ -1803,7 +1856,7 @@ cat("SPOTlight done\\n")
 
         if os.path.exists(out_csv):
 
-            prop = pd.read_csv(out_csv, index_col=0)
+            prop = pd.read_csv(out_csv).set_index("barcode")
 
             steps.append(f"SPOTlight proportions: {prop.shape[0]} spots x {prop.shape[1]} cell types")
 
@@ -1937,21 +1990,17 @@ def deconvolve_spatial_destvi(
 
     if cell_type_key not in ref.obs:
 
-        return f"Error: cell_type_key '{cell_type_key}' not found in reference obs"
+        return f"Error: cell_type_key {_r_literal(cell_type_key)} not found in reference obs"
 
 
 
-    # Use raw counts if stored
-
-    if "counts" in ref.layers:
-
-        ref.X = ref.layers["counts"].copy()
+    ref = _raw_count_adata(ref, "reference")
 
 
 
     # Load spatial data first so we can align genes before training CondSCVI
 
-    st = sc.read_h5ad(st_h5ad)
+    st = _raw_count_adata(sc.read_h5ad(st_h5ad), "spatial")
 
     steps.append(f"Spatial: {st.shape[0]} spots x {st.shape[1]} genes")
 
@@ -2002,17 +2051,6 @@ def deconvolve_spatial_destvi(
     st = st[:, common_genes].copy()
 
     steps.append(f"Aligned on {len(common_genes)} common genes (ref and st)")
-
-
-
-    # Ensure counts are integer for scvi
-    from scipy.sparse import issparse
-
-    for ad in (ref, st):
-        if issparse(ad.X):
-            ad.X.data = ad.X.data.astype(np.int32)
-        else:
-            ad.X = np.asarray(ad.X).astype(np.int32)
 
 
 
@@ -2099,368 +2137,167 @@ def deconvolve_spatial_destvi(
 
 
 def infer_spatial_cell_communication(
-
     st_h5ad: str,
-
     cell_type_key: str,
-
     output_dir: str = "./cellchat_results",
-
     plot_path: str = None,
-
     r_script_path: str = "Rscript",
-
     species: str = None,
-
+    mode: str = "expression",
+    microns_per_coordinate: float = None,
+    spatial_tolerance: float = None,
+    interaction_range: float = 250.0,
+    scale_distance: float = 0.01,
+    contact_range: float = None,
+    k_min: int = 10,
 ) -> str:
+    """Infer CellChat v2.1.2 expression or distance-constrained communication.
 
-    """Infer spatially proximal cell-cell communication using CellChat v2.
-
-
-
-    CellChat v2 (Jin et al., Nature Protocols 2024) infers cell-cell
-
-    communication networks. When spatial coordinates are available it uses the
-
-    spatial locations of cells/spots to restrict communication to spatially
-
-    proximal pairs. Exports communication tables and a network plot (PNG).
-
-
-
-    Args:
-
-        st_h5ad: Path to the Visium AnnData (h5ad) with cell-type labels
-
-            (e.g. from deconvolution) and spatial coordinates.
-
-        cell_type_key: Column in st_h5ad.obs containing cell-type labels.
-
-        output_dir: Directory where CellChat results are saved.
-
-        plot_path: Path where the communication network plot will be saved.
-
-        r_script_path: Path to the Rscript executable.
-
-        species: Species for CellChatDB ('human' or 'mouse').
-
-
-
-    Returns:
-
-        str: Step-by-step log describing the communication inference result.
-
+    Expression mode preserves the historical computation and ignores coordinates.
+    Spatial mode requires finite x/y coordinates, microns per coordinate unit,
+    and a nonnegative spatial_tolerance in microns. interaction_range and optional
+    contact_range are in microns. scale_distance rescales group distances for
+    CellChat; choose it so the smallest scaled distance is >= 1 (CellChat checks
+    this). k_min is the minimum number of nearby cell pairs per group pair.
+    Contact-specific filtering is enabled when contact_range is provided.
+    Both modes export CSV tables, the fitted RDS object, logs and run_settings.json.
+    Raw integer counts are required in layers['counts'], raw.X, or X.
     """
-
-    import subprocess
-
+    import json
     import tempfile
-
-
-
-    if not os.path.exists(st_h5ad):
-
-        return "Error: st_h5ad file not found"
-
-
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    steps = []
-
-    steps.append(f"CellChat spatial communication inference: {st_h5ad}")
-
-    # FIX 2026-08-26: species 不写死, 自动检测 (LLM-in-the-loop; 检测失败时 LLM 传参)
-    if species is None:
-        import scanpy as sc
-        _tmp = sc.read_h5ad(st_h5ad)
-        species = detect_species(_tmp)
-        print(f"  species auto-detected: {species}")
-        steps.append(f"species auto-detected: {species}")
-        if species == "unknown":
-            raise ValueError(
-                "Could not auto-detect species from gene symbols. "
-                "Pass species='human' or 'mouse' explicitly (LLM decision).")
-
-
-
-    if plot_path is None:
-
-        plot_path = os.path.join(output_dir, "cellchat_network.png")
-
-
-
-    # Convert h5ad to 10x format for R (deterministic bridge)
-
+    import numpy as np
     import scipy.io as sio
-
-
-
-    bridge_dir = os.path.join(output_dir, "_bridge")
-
-    os.makedirs(bridge_dir, exist_ok=True)
-
-
-
-    ad = sc.read_h5ad(st_h5ad)
-
-    if ad.raw is not None:
-
-        ad = ad.raw.to_adata()
-
-    if "counts" in ad.layers:
-
-        ad.X = ad.layers["counts"].copy()
-
-    mtx_path = os.path.join(bridge_dir, "st_matrix.mtx")
-
-    feat_path = os.path.join(bridge_dir, "st_features.tsv")
-
-    bar_path = os.path.join(bridge_dir, "st_barcodes.tsv")
-
     from scipy.sparse import csr_matrix
 
-    X_sparse = ad.X if hasattr(ad.X, "tocsr") else csr_matrix(ad.X)
+    if mode not in {"expression", "spatial"}:
+        raise ValueError("mode must be expression or spatial")
+    ad = _raw_count_adata(sc.read_h5ad(st_h5ad), "CellChat input")
+    if cell_type_key not in ad.obs or ad.obs[cell_type_key].isna().any():
+        raise ValueError("CellChat requires a nonmissing cell-type label for every observation")
+    species = detect_species(ad) if species is None else species
+    if species not in {"human", "mouse"}:
+        raise ValueError("Set species to human or mouse")
+    spatial_args = ""
+    creation = f"cellchat <- createCellChat(object = obj, group.by = {_r_literal(cell_type_key)})"
+    if mode == "spatial":
+        positive = {"microns_per_coordinate": microns_per_coordinate,
+                    "interaction_range": interaction_range, "scale_distance": scale_distance}
+        if contact_range is not None:
+            positive["contact_range"] = contact_range
+        for name, value in positive.items():
+            if value is None or not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive for spatial mode")
+        if spatial_tolerance is None or not np.isfinite(spatial_tolerance) or spatial_tolerance < 0:
+            raise ValueError("spatial_tolerance must be finite and nonnegative in microns")
+        if isinstance(k_min, bool) or int(k_min) != k_min or k_min < 1:
+            raise ValueError("k_min must be a positive integer")
+        coords = np.asarray(ad.obsm.get("spatial", []), dtype=float)
+        if coords.shape != (ad.n_obs, 2) or not np.isfinite(coords).all():
+            raise ValueError("Spatial CellChat requires finite (n_cells, 2) spatial coordinates")
+        spatial_args = (f", distance.use = TRUE, interaction.range = {float(interaction_range)}, "
+                        f"scale.distance = {float(scale_distance)}, k.min = {int(k_min)}, "
+                        f"contact.dependent = {'TRUE' if contact_range is not None else 'FALSE'}")
+        if contact_range is not None:
+            spatial_args += f", contact.range = {float(contact_range)}"
 
-    sio.mmwrite(mtx_path, X_sparse.T)
-
-    with open(feat_path, "w") as f:
-
-        for g in ad.var_names:
-
-            f.write(f"{g}\t{g}\tGene Expression\n")
-
-    with open(bar_path, "w") as f:
-
-        for b in ad.obs_names:
-
-            f.write(f"{b}\n")
-
+    os.makedirs(output_dir, exist_ok=True)
+    plot_path = plot_path or os.path.join(output_dir, "cellchat_network.png")
+    os.makedirs(os.path.dirname(plot_path) or ".", exist_ok=True)
+    bridge_dir = os.path.join(output_dir, "_bridge")
+    os.makedirs(bridge_dir, exist_ok=True)
+    mtx_path = os.path.join(bridge_dir, "st_matrix.mtx")
+    feat_path = os.path.join(bridge_dir, "st_features.tsv")
+    bar_path = os.path.join(bridge_dir, "st_barcodes.tsv")
     ct_path = os.path.join(bridge_dir, "st_celltypes.tsv")
-
-    # CellChat rejects cell labels containing "0" (its setIdent treats 0 as
-    # background/missing). leiden/domain labels are 0-based, so shift numeric
-    # labels that start at 0 to 1-based before writing the bridge TSV.
-    labels = ad.obs[cell_type_key]
-    labels_str = labels.astype(str)
-    if labels_str.str.match(r"^\d+$").all() and (labels_str == "0").any():
-        labels = (labels_str.astype(int) + 1).astype(str)
-    else:
-        labels = labels_str
-    labels.to_frame(cell_type_key).to_csv(ct_path, header=True, index=False)
-
-    # Spatial coordinates
-
     coord_path = os.path.join(bridge_dir, "st_coords.csv")
-
-    if "spatial" in ad.obsm:
-
-        pd.DataFrame(ad.obsm["spatial"], index=ad.obs_names,
-
-                     columns=["x", "y"]).to_csv(coord_path)
-
-        steps.append("Converted spatial coordinates for CellChat")
-
-    steps.append("Converted h5ad to 10x format for CellChat bridge")
-
-
-
-    r_script = f"""
-
-suppressPackageStartupMessages({{
-
-  library(CellChat)
-
-  library(Seurat)
-
-  library(Matrix)
-
-}})
-
-
-
-# Build Seurat object from 10x-format files (deterministic bridge)
-
-cnt <- readMM('{mtx_path}')  # genes x cells
-
-rownames(cnt) <- read.delim('{feat_path}', header = FALSE)[,1]  # genes
-
-colnames(cnt) <- read.delim('{bar_path}', header = FALSE)[,1]   # cells
-
-obj <- CreateSeuratObject(counts = cnt, assay = "RNA")
-
-obj <- NormalizeData(obj)  # CellChat needs the 'data' (log-normalized) layer
-
-ct <- read.delim('{ct_path}')
-
-obj <- AddMetaData(obj, metadata = ct[,1], col.name = '{cell_type_key}')
-
-
-
-# Attach spatial coordinates if available
-
-coord_file <- '{coord_path}'
-
-if (file.exists(coord_file)) {{
-
-  coords <- read.csv(coord_file, row.names = 1)
-
-  coords <- as.matrix(coords[, c("x", "y")])
-
-  colnames(coords) <- c("slice1_1", "slice1_2")  # Seurat requires key+digit colnames
-
-  rownames(coords) <- rownames(obj@meta.data)
-
-  obj[["slice1"]] <- CreateDimReducObject(embeddings = coords, key = "slice1_", assay = "RNA")
-
-}}
-
-
-
-cellchat <- createCellChat(object = obj, group.by = '{cell_type_key}')
-
-
-
-# Set ligand-receptor database
-
-# 官方标准用法 (CellChat tutorial): CellChatDB <- CellChatDB.mouse; cellchat@DB <- CellChatDB
-# 不需要 data()/invisible()——lazy-load 由 CellChat 内部处理
-CellChatDB <- CellChatDB.{species}
-
-cellchat@DB <- CellChatDB
-
-
-
-# Preprocessing
-
-cellchat <- subsetData(cellchat)
-
-future::plan("multisession", workers = 4)
-
-cellchat <- identifyOverExpressedGenes(cellchat)
-
-cellchat <- identifyOverExpressedInteractions(cellchat)
-
-
-
-# Inference
-# type="truncatedMean", trim=0.1: Visium HD 基因检出率低 (稀疏), triMean(25%截断)会把
-# 低检出率的信号配体 (WNT/BMP/NOTCH/EGF) 平均表达算成 0, 导致检测不到.
-# 用 10% 截断均值更宽松, 官方教程推荐处理稀疏数据时使用.
-cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1)
-
-cellchat <- filterCommunication(cellchat, min.cells = 10)
-
-cellchat <- computeCommunProbPathway(cellchat)
-
-cellchat <- aggregateNet(cellchat)
-
-
-
-# Export results
-
-df <- subsetCommunication(cellchat)
-
-write.csv(df, file.path('{output_dir}', 'cellchat_communication.csv'), row.names = FALSE)
-
-df_path <- subsetCommunication(cellchat, slot.name = "netP")
-
-write.csv(df_path, file.path('{output_dir}', 'cellchat_pathways.csv'), row.names = FALSE)
-
-
-
-# Network plot (labels shown so each node carries its cell-type identity)
-
-png('{plot_path}', width = 10, height = 10, units = "in", res = 150)
-
-netVisual_circle(cellchat@net$count, vertex.weight = table(cellchat@idents),
-
-                 weight.scale = TRUE, label.edge = FALSE, title.name = "CellChat network",
-
-                 vertex.label.cex = 1.2)
-
-dev.off()
-
-cat("CellChat done\\n")
-
+    sio.mmwrite(mtx_path, csr_matrix(ad.X).T)
+    pd.Series(ad.var_names).to_csv(feat_path, sep="\t", index=False, header=False)
+    pd.Series(ad.obs_names).to_csv(bar_path, sep="\t", index=False, header=False)
+    labels = ad.obs[cell_type_key].astype(str)
+    if labels.str.strip().eq("").any():
+        raise ValueError("CellChat labels must be nonempty")
+    if (labels == "0").any():
+        # Prefix all labels to preserve identity even for mixed labels such as 0/A.
+        labels = "group_" + labels
+    labels.to_frame(cell_type_key).to_csv(ct_path, index=False)
+    if mode == "spatial":
+        pd.DataFrame(coords, index=ad.obs_names, columns=["x", "y"]).to_csv(coord_path)
+        creation = f"""
+coords <- as.matrix(read.csv({_r_literal(coord_path)}, row.names = 1, check.names = FALSE))
+coords <- coords[colnames(obj), , drop = FALSE]
+cellchat <- createCellChat(object = obj, group.by = {_r_literal(cell_type_key)},
+                          datatype = "spatial", coordinates = coords,
+                          spatial.factors = data.frame(ratio = {float(microns_per_coordinate)},
+                                                       tol = {float(spatial_tolerance)}))
 """
-
-    with tempfile.NamedTemporaryFile(suffix=".R", mode="w", delete=False, dir=output_dir) as f:
-
-        f.write(r_script)
-
-        r_script_path_tmp = f.name
-
-
-
+    settings = {"mode": mode, "species": species, "cell_type_key": cell_type_key,
+                "microns_per_coordinate": microns_per_coordinate, "spatial_tolerance": spatial_tolerance,
+                "interaction_range": interaction_range, "scale_distance": scale_distance,
+                "contact_range": contact_range, "k_min": k_min,
+                "label_mapping": dict(zip(ad.obs[cell_type_key].astype(str), labels))}
+    with open(os.path.join(output_dir, "run_settings.json"), "w", encoding="utf-8") as handle:
+        json.dump(settings, handle, ensure_ascii=False, indent=2)
+    r_script = f"""
+suppressPackageStartupMessages({{library(CellChat); library(Seurat); library(Matrix)}})
+cnt <- readMM({_r_literal(mtx_path)})
+rownames(cnt) <- read.delim({_r_literal(feat_path)}, header = FALSE, quote = "", comment.char = "")[,1]
+colnames(cnt) <- read.delim({_r_literal(bar_path)}, header = FALSE, quote = "", comment.char = "")[,1]
+obj <- CreateSeuratObject(counts = cnt, assay = "RNA")
+obj <- NormalizeData(obj)
+ct <- read.csv({_r_literal(ct_path)}, check.names = FALSE)
+obj <- AddMetaData(obj, metadata = ct[,1], col.name = {_r_literal(cell_type_key)})
+{creation}
+cellchat@DB <- CellChatDB.{species}
+cellchat <- subsetData(cellchat)
+future::plan("sequential")
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1{spatial_args})
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+saveRDS(cellchat, file.path({_r_literal(output_dir)}, "cellchat.rds"))
+if (sum(cellchat@net$count) > 0) {{
+  df <- subsetCommunication(cellchat)
+}} else {{
+  df <- data.frame(source = character(), target = character(), ligand = character(),
+                   receptor = character(), prob = numeric(), pval = numeric(),
+                   interaction_name = character(), pathway_name = character())
+}}
+write.csv(df, file.path({_r_literal(output_dir)}, "cellchat_communication.csv"), row.names = FALSE)
+if (length(cellchat@netP$pathways) > 0) {{
+  df_path <- subsetCommunication(cellchat, slot.name = "netP")
+}} else {{
+  df_path <- data.frame(source = character(), target = character(), pathway_name = character(),
+                        prob = numeric(), pval = numeric())
+}}
+write.csv(df_path, file.path({_r_literal(output_dir)}, "cellchat_pathways.csv"), row.names = FALSE)
+png({_r_literal(plot_path)}, width = 10, height = 10, units = "in", res = 150)
+if (sum(cellchat@net$count) > 0) {{
+  netVisual_circle(cellchat@net$count, vertex.weight = table(cellchat@idents),
+                   weight.scale = TRUE, label.edge = FALSE,
+                   title.name = "CellChat ({mode})", vertex.label.cex = 1.2)
+}} else {{
+  plot.new(); title("CellChat ({mode}): no significant interactions")
+}}
+dev.off()
+cat("CellChat done\\n")
+"""
+    with tempfile.NamedTemporaryFile(suffix=".R", mode="w", encoding="utf-8",
+                                     delete=False, dir=output_dir) as handle:
+        handle.write(r_script)
+        script_path = handle.name
     try:
-
-        result = subprocess.run(
-
-            [r_script_path, r_script_path_tmp],
-
-            capture_output=True,
-
-            text=True,
-
-            timeout=3600,
-
-        )
-
-        steps.append(f"R output: {result.stdout.strip()[:500]}")
-
-        if result.returncode != 0:
-
-            steps.append(f"R error: {result.stderr.strip()[:500]}")
-
-            return "\n".join(steps)
-
-        comm_csv = os.path.join(output_dir, "cellchat_communication.csv")
-
-        if os.path.exists(comm_csv):
-
-            comm = pd.read_csv(comm_csv)
-
-            steps.append(f"CellChat communication pairs: {len(comm)}")
-
-            steps.append(f"Results saved to {comm_csv}")
-
-        else:
-
-            steps.append("Warning: output CSV not found")
-
-        if os.path.exists(plot_path):
-
-            steps.append(f"Network plot saved to {plot_path}")
-
-        else:
-
-            steps.append("Warning: network plot not found")
-
-    except Exception as e:
-
-        steps.append(f"Error running CellChat: {e}")
-
+        result = _run_r_script(r_script_path, script_path, output_dir)
+        if result.returncode:
+            raise RuntimeError(f"CellChat failed; see {output_dir}/r_stderr.log: {result.stderr[-1500:]}")
     finally:
-
-        os.unlink(r_script_path_tmp)
-
-
-
-    return "\n".join(steps)
-
-
-
-
-
-# ============================================================================
-
-# Stage 6: Neighborhood enrichment analysis
-
-# ============================================================================
-
-
-
+        os.unlink(script_path)
+    comm_csv = os.path.join(output_dir, "cellchat_communication.csv")
+    comm = pd.read_csv(comm_csv)
+    return (f"CellChat mode: {mode}; species: {species}\n"
+            f"CellChat communication pairs: {len(comm)}\nResults saved to {comm_csv}\n"
+            f"Network plot saved to {plot_path}\nModel saved to {output_dir}/cellchat.rds")
 
 
 def spatial_neighborhood_enrichment(
@@ -2533,7 +2370,7 @@ def spatial_neighborhood_enrichment(
 
     if cell_type_key not in adata.obs:
 
-        return f"Error: cell_type_key '{cell_type_key}' not found in obs"
+        return f"Error: cell_type_key {_r_literal(cell_type_key)} not found in obs"
 
     if "spatial" not in adata.obsm:
 

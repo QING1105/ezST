@@ -58,12 +58,12 @@ codex plugin marketplace add QING1105/ezST
 ### 2. 安装 plugin
 
 ```bash
-codex plugin install spatial-transcriptomics
+codex plugin add spatial-transcriptomics@ezST
 ```
 
-> 如果 plugin 名称冲突，可以用 `--from` 指定市场来源：
+> `@ezST` 指定插件所在的 marketplace：
 > ```bash
-> codex plugin install spatial-transcriptomics --from ezST
+> codex plugin add spatial-transcriptomics@ezST
 > ```
 
 ### 3. 验证安装
@@ -80,7 +80,7 @@ codex plugin marketplace list
 
 ```bash
 codex plugin marketplace add ./path/to/ezST
-codex plugin install spatial-transcriptomics --from ezST
+codex plugin add spatial-transcriptomics@ezST
 ```
 
 ## 使用
@@ -203,3 +203,31 @@ ezST/
 ## License
 
 MIT
+
+## 0.2.1 计算与格式约定
+
+本次修复安装依赖、原始计数与空间分析、Visium HD 分割聚合和 Proseg 基因映射，并改善 Windows 兼容性及下游流程。
+
+- DestVI、scVI 和 CellChat 从 `layers['counts']`、有效的 `raw.X` 或整数 `X` 读取原始计数；归一化保留 counts 层。
+- 空间域默认 `spatial_weight=0`，含义为表达聚类。设置 `0 < spatial_weight <= 1` 时，分别对表达 KNN 与坐标 KNN 图做 D^(-1/2) A D^(-1/2) 归一化，再按 `(1-w)*expression + w*spatial` 混合后执行 Leiden。方法与权重写入 `uns['domain_clustering']`。
+- CellChat 默认 `mode='expression'`。空间模式设置 `mode='spatial'`，并显式提供 `microns_per_coordinate` 和微米单位的 `spatial_tolerance`。`interaction_range` 控制作用范围，`scale_distance` 按 CellChat 的距离缩放要求选择；提供 `contact_range` 时启用接触依赖过滤。保存 `run_settings.json`、`cellchat.rds`、通讯/通路 CSV 和网络 PNG。零条显著通讯会导出带列名的空表。
+- Visium HD 重叠 bin 按到原始核质心的距离分给唯一细胞，等距时取较小 object_id；每个基因的已分配计数守恒。
+- StarDist 几何保存为数值 `.npz`，面积过滤同步更新标签、轮廓和概率。旧 `.pckl` 文件需显式设置 `allow_legacy_pickle=True`，并确认来源可信。
+- Proseg 导出细胞×基因矩阵、细胞元数据和基因元数据；导入核对维度、细胞编号、基因名称与坐标尺度。Proseg 可执行程序单独安装，`proseg_executable` 可指定路径。
+
+安装 HD 可选依赖与运行测试：
+
+```bash
+python -m pip install -e ".[hd,test]"
+python -m pytest
+python scripts/sync_plugin_runtime.py --check
+```
+
+HD 下游与裁图工具支持模块方式运行，路径由调用者传入：
+
+```bash
+python -m ezst.run_hd_downstream --cells cells.h5ad --skip-annotate --spatial-weight 0.5 --skip-cellchat
+python -m ezst.make_crop --method stardist --image tissue.tif --cells cells.h5ad --geometry nuclei_polys.npz --roi 0,0,1000,1000 --out crop.png
+```
+
+运行记录与复现步骤见 [修复与验证说明](docs/validation-0.2.1.md)。

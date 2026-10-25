@@ -4,6 +4,14 @@ description: Visium HD platform branch of the spatial transcriptomics workflow �
 license: MIT
 ---
 
+## 0.2.1 运行约定
+
+表达聚类使用 `identify_spatial_domains(..., spatial_weight=0)`；加入空间邻接时显式设置 0 到 1 之间的权重，并报告 `uns['domain_clustering']`。CellChat 默认 `mode="expression"`；空间模式需要 `mode="spatial"`、`microns_per_coordinate`、`spatial_tolerance`，按样本尺度设置作用范围和距离缩放。输入优先使用保存的原始 counts。CellChat 输出实际为 `cellchat_communication.csv`、`cellchat_pathways.csv`、`cellchat.rds`、`cellchat_network.png` 与 `run_settings.json`。
+
+StarDist 几何使用数值 `.npz`，旧 pickle 读取需显式 `allow_legacy_pickle=True`。HD 裁图通过 `--image`、`--cells`、`--geometry`、`--roi` 指定输入；全部坐标使用全分辨率图像像素。Proseg 基因名来自其导出的 `proseg_genes.csv.gz`，导入后核对 `var_names`。Python 与插件内运行文件通过 `python scripts/sync_plugin_runtime.py` 同步。
+
+
+
 # Visium HD Branch — Cell Segmentation & Bin-to-Cell
 
 ## Goal
@@ -95,7 +103,7 @@ results/07b_segmentation/
 │   ├── 01_load_bins.h5ad
 │   ├── 02_destripe.h5ad          # (如启用 destripe)
 │   ├── 03_nuclei_labels.npz      # 核分割 labels
-│   ├── 03_nuclei_polys.pckl      # StarDist 多边形 (供几何绘图)
+│   ├── 03_nuclei_polys.npz      # StarDist 多边形 (供几何绘图)
 │   ├── 03_nuclei_crop.png        # 核分割检查图
 │   ├── 04_bin2cell.h5ad          # 细胞级 AnnData (cells × genes)
 │   ├── 04_cells_overlay.png      # 全图高清几何 overlay (蓝色轮廓)
@@ -105,7 +113,7 @@ results/07b_segmentation/
 │   └── params.json               # 实际运行参数
 ├── <sample>_proseg/              # Proseg 分支
 │   ├── 01_load_bins.h5ad
-│   ├── 03_nuclei_labels.npz / 03_nuclei_polys.pckl
+│   ├── 03_nuclei_labels.npz / 03_nuclei_polys.npz
 │   ├── 03_nuclei_crop.png
 │   ├── proseg_out.zarr/          # Proseg 几何输出 (cell_boundaries)
 │   ├── 04_proseg_cells.h5ad      # 细胞级 AnnData

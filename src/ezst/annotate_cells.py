@@ -59,16 +59,12 @@ def _to_log1p(a):
 
 
 def _to_counts(a):
-    """若是 log1p, 转 counts (scVI 分支用, 尽力还原)"""
-    if _is_counts(a.X):
-        return a
-    X = a.X
-    if sp.issparse(X):
-        X.data = np.expm1(X.data.astype(np.float64)).astype(np.float32)
-        a.X = X
-    else:
-        a.X = np.expm1(X.astype(np.float64)).astype(np.float32)
-    return a
+    """Use preserved raw counts for the count-likelihood model."""
+    try:
+        from .visium import _raw_count_adata
+    except ImportError:
+        from visium import _raw_count_adata
+    return _raw_count_adata(a, "annotation input")
 
 
 def run_scvi(cells_s, ref_s, cell_type_key, out_dir, args):
@@ -88,7 +84,7 @@ def run_scvi(cells_s, ref_s, cell_type_key, out_dir, args):
     from sklearn.neighbors import KNeighborsClassifier
     ref_mask = combined.obs["_batch"] == "ref"
     query_mask = ~ref_mask
-    knn = KNeighborsClassifier(n_neighbors=10, weights="distance", metric="cosine")
+    knn = KNeighborsClassifier(n_neighbors=min(10, int(ref_mask.sum())), weights="distance", metric="cosine")
     knn.fit(combined.obsm["X_scVI"][ref_mask], combined.obs.loc[ref_mask, cell_type_key].astype(str).to_numpy())
     pred = knn.predict(combined.obsm["X_scVI"][query_mask])
     proba = knn.predict_proba(combined.obsm["X_scVI"][query_mask])
@@ -111,11 +107,11 @@ def run_ingest(cells_s, ref_s, cell_type_key, out_dir, args):
         combined.var["highly_variable"] = True
     combined = combined[:, combined.var["highly_variable"]].copy()
     sc.pp.scale(combined, max_value=10)
-    sc.tl.pca(combined, n_comps=30, svd_solver="arpack")
+    sc.tl.pca(combined, n_comps=min(30, combined.n_obs - 1, combined.n_vars - 1), svd_solver="arpack")
     print("[ingest] kNN label transfer...")
     ref_mask = combined.obs["_batch"] == "ref"
     query_mask = ~ref_mask
-    knn = KNeighborsClassifier(n_neighbors=10, weights="distance", metric="cosine")
+    knn = KNeighborsClassifier(n_neighbors=min(10, int(ref_mask.sum())), weights="distance", metric="cosine")
     knn.fit(combined.obsm["X_pca"][ref_mask], combined.obs.loc[ref_mask, cell_type_key].astype(str).to_numpy())
     pred = knn.predict(combined.obsm["X_pca"][query_mask])
     proba = knn.predict_proba(combined.obsm["X_pca"][query_mask])
@@ -172,7 +168,7 @@ def main():
     # --- 4. 数据形态统一 ---
     if method == "scvi":
         # scVI 需要 counts
-        print("scVI: converting to counts (if needed)")
+        print("scVI: loading preserved raw counts")
         cells_s = _to_counts(cells_s)
         ref_s = _to_counts(ref_s)
         pred, proba = run_scvi(cells_s, ref_s, args.cell_type_key, args.out_dir, args)

@@ -9,6 +9,8 @@
 #   4. CellChat 源码包自带预编译 .o/.so (作者环境), 必须删除强制重编, 否则 "无效的 ELF 头"
 #   5. v2.1.2 lazy-load 正常: 直接 CellChatDB.mouse 即可, 不要加 data() 显式加载 (会破坏 lazy-load)
 
+if (getRversion() < "4.3") stop("ezST requires R >= 4.3")
+
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 options(timeout = 600)  # 大包下载超时放宽
 
@@ -79,7 +81,8 @@ for (pkg in c("SingleCellExperiment", "SummarizedExperiment", "scater", "scran")
 #    GitHub release: https://github.com/jinworks/CellChat/archive/refs/tags/v2.1.2.tar.gz
 #    注意: 不装 main 开发版 (2.2.0.9001), 它有 lazy-load bug 导致 CellChatDB 为空
 CELLCHAT_VER <- "2.1.2"
-if (!requireNamespace("CellChat", quietly = TRUE)) {
+if (!"CellChat" %in% rownames(installed.packages()) ||
+    as.character(utils::packageVersion("CellChat")) != CELLCHAT_VER) {
   cat("安装 CellChat v", CELLCHAT_VER, " (GitHub 稳定版)...\n", sep = "")
   # 5.1 先装依赖 (CellChat 的 NAMESPACE 硬引用 ggpubr, 必须先装)
   deps <- c("Deriv", "doBy", "pbkrtest", "car", "rstatix", "ggpubr")
@@ -96,6 +99,13 @@ if (!requireNamespace("CellChat", quietly = TRUE)) {
   download.file(url, tarball, quiet = TRUE)
   untar(tarball, exdir = tmp)
   srcdir <- file.path(tmp, sprintf("CellChat-%s", CELLCHAT_VER))
+  # Install every declared runtime/build dependency from CRAN/Bioconductor.
+  desc <- read.dcf(file.path(srcdir, "DESCRIPTION"))
+  declared <- paste(desc[1, intersect(c("Depends", "Imports", "LinkingTo"), colnames(desc))], collapse = ",")
+  required <- unique(trimws(gsub("\\s*\\(.*?\\)", "", strsplit(declared, ",")[[1]])))
+  required <- setdiff(required, c("R", ""))
+  missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(missing)) BiocManager::install(missing, update = FALSE, ask = FALSE)
   # 5.3 删除源码里预编译的 .o/.so (作者环境编译的, 直接装会 "无效的 ELF 头")
   obj_files <- list.files(file.path(srcdir, "src"), pattern = "\\.(o|so)$", full.names = TRUE)
   if (length(obj_files) > 0) {
@@ -105,13 +115,12 @@ if (!requireNamespace("CellChat", quietly = TRUE)) {
   # 5.4 编译安装
   install.packages(srcdir, repos = NULL, type = "source")
 } else {
-  # 已装但可能是开发版 -> 提示
-  ver <- as.character(utils::packageVersion("CellChat"))
-  cat("✓ CellChat 已安装 (版本", ver, ")\n")
-  if (ver != CELLCHAT_VER) {
-    cat("⚠️  当前版本", ver, "不是稳定版", CELLCHAT_VER, "。如需稳定版请先 remove.packages('CellChat') 再重跑本脚本\n")
-  }
+  cat("CellChat", CELLCHAT_VER, "already installed\n")
 }
 
-cat("\n=== ezST R 依赖安装完成 ===\n")
-cat("验证: Rscript -e 'library(Seurat); library(SPOTlight); library(CellChat); data(\"CellChatDB.mouse\"); dim(CellChatDB.mouse$interaction)'\n")
+required <- c("Seurat", "SPOTlight", "CellChat")
+stopifnot(all(vapply(required, requireNamespace, logical(1), quietly = TRUE)))
+stopifnot(as.character(utils::packageVersion("CellChat")) == CELLCHAT_VER)
+stopifnot(nrow(CellChat::CellChatDB.mouse$interaction) > 0)
+cat("\n=== ezST R dependencies verified ===\n")
+for (pkg in required) cat(pkg, as.character(utils::packageVersion(pkg)), "\n")

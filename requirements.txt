@@ -4,13 +4,15 @@ anndata>=0.10
 squidpy>=1.6
 scvi-tools>=1.2
 leidenalg>=0.10
-cell2location>=0.05
+cell2location>=0.1.5,<0.2
+pyro-ppl==1.9.1
+scikit-misc>=0.3
 numpy
 pandas
 scipy
 matplotlib
 python-igraph
-harmonypy
+harmonypy==0.0.10
 tqdm
 joblib
 
@@ -23,3 +25,9 @@ stardist>=0.9
 tensorflow>=2.16
 tifffile
 csbdeep
+
+geopandas>=0.14
+shapely>=2
+pyarrow>=14
+imageio
+h5py

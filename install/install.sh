@@ -19,7 +19,7 @@ python3 -c "import sys; assert sys.version_info >= (3,10), '需要 Python >= 3.1
 
 # 2. pip 安装（Python 依赖自动装）
 echo -e "${YELLOW}[1/2] 安装 ezST (pip)...${NC}"
-pip install -e "$REPO_DIR"
+python3 -m pip install -e "$REPO_DIR"
 
 # 3. R 包（仅 S4 反卷积 / S5 通讯需要）
 echo -e "${YELLOW}[2/2] 安装 R 包 (Seurat / SPOTlight / CellChat)...${NC}"

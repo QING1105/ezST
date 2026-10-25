@@ -37,10 +37,10 @@ import os
 import sys
 import time
 
-# 让 ezST 可被 import（开发环境直接指向仓库 src）
-sys.path.insert(0, "/root/ezst_repo/src")
-
-from ezst.visium import normalize_visium, cluster_spatial_data
+try:
+    from .visium import normalize_visium, cluster_spatial_data
+except ImportError:
+    from visium import normalize_visium, cluster_spatial_data
 
 
 def parse_args():

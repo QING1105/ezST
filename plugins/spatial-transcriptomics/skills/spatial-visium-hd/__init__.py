@@ -11,7 +11,7 @@ Platform extensions (Visium HD / Xenium / Atera) are under active development
 in `ezst.visium_new_platforms`.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .visium import (  # noqa: F401
     init_spatial_project,

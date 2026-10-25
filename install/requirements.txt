@@ -1,6 +1,5 @@
 # ezST Python 依赖（pip 补充，供 install.sh / install.bat 使用）
-# 核心依赖已在 environment.yml 中通过 conda 安装，此文件仅补充
-# conda 渠道没有或版本滞后的包。
+# 经典 Visium 的独立依赖清单；可直接用于 python -m pip install -r。
 
 # 空间转录组核心
 scanpy>=1.10
@@ -8,7 +7,9 @@ squidpy>=1.6
 scvi-tools>=1.2
 leidenalg>=0.10
 anndata>=0.10
-cell2location>=0.05
+cell2location>=0.1.5,<0.2
+pyro-ppl==1.9.1
+scikit-misc>=0.3
 
 # 底层依赖
 numpy
@@ -16,7 +17,7 @@ pandas
 scipy
 matplotlib
 python-igraph
-harmonypy
+harmonypy==0.0.10
 
 # 其他可能需要的
 tqdm

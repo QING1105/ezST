@@ -1,12 +1,12 @@
 {
   "name": "spatial-transcriptomics",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Staged 10x Visium spatial transcriptomics analysis workflow with human review gates and LLM biological interpretation at every stage.",
   "author": {
     "name": "QING1105",
     "url": "https://github.com/QING1105"
   },
-  "homepage": "https://github.com/QING1105/ezST/tree/main/plugins/spatial-transcriptomics",
+  "homepage": "https://github.com/QING1105/ezST/tree/master/plugins/spatial-transcriptomics",
   "repository": "https://github.com/QING1105/ezST",
   "license": "MIT",
   "keywords": [
@@ -29,7 +29,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/QING1105/ezST/tree/main/plugins/spatial-transcriptomics",
+    "websiteURL": "https://github.com/QING1105/ezST/tree/master/plugins/spatial-transcriptomics",
     "defaultPrompt": [
       "Analyze my gastric cancer Visium data at '/data/gastric/GSE246011/' with the staged spatial transcriptomics workflow, stopping at each stage for my review.",
       "Run cell-cell communication analysis on my clustered Visium data at '/data/gastric/proj/results/04_clustering/sample_clustered.h5ad'.",

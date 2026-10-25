@@ -1,11 +1,15 @@
 """
-New platform functions (Visium HD / Xenium / Atera) — NOT yet pushed to GitHub.
-
-These are under active testing (segment_cells StarDist integration). Once
-verified, merge into visium.py and update __init__.py exports.
+Spatial-platform loading, segmentation, aggregation, and visualization helpers.
 """
 
 import os
+
+try:
+    from ._geometry import (load_nuclei_polygons, save_nuclei_polygons,
+                            filter_nuclei_instances, nuclei_xy_polygons, read_proseg_counts)
+except ImportError:  # direct execution of the bundled skill scripts
+    from _geometry import (load_nuclei_polygons, save_nuclei_polygons,
+                           filter_nuclei_instances, nuclei_xy_polygons, read_proseg_counts)
 
 
 def _probe_gpu() -> bool:
@@ -63,12 +67,12 @@ def _plot_setup(output_dir: str) -> None:
 def _plot_cells_overlay(adata, image_path, plot_path, title=None, downsample=1,
                         max_points=None, geometry_path=None, geometry_kind="auto",
                         edge_color="tab:red", linewidth=0.12, dpi=150,
-                        figsize_scale=1.0):
+                        figsize_scale=1.0, allow_legacy_pickle=False):
     """HE background + cell overlay plot (HD, full-resolution).
 
     Supports two visual modes:
       1. Geometry mode (default when geometry_path given): draws the true cell
-         boundaries as polygons (Proseg WKB parquet or StarDist polys.pckl).
+         boundaries as polygons (Proseg WKB parquet or StarDist polys.npz).
       2. Scatter fallback: centroids from adata.obsm['spatial'].
 
     Args:
@@ -80,7 +84,7 @@ def _plot_cells_overlay(adata, image_path, plot_path, title=None, downsample=1,
         max_points: Cap on scatter points (None = all).
         geometry_path: Path to geometry source:
             - Proseg: proseg_out.zarr/shapes/cell_boundaries/shapes.parquet
-            - StarDist: polys.pckl (list of shapely polygons / dict with 'coord')
+            - StarDist: polys.npz (list of shapely polygons / dict with 'coord')
         geometry_kind: 'proseg' | 'stardist' | 'auto' (infer from extension).
         edge_color: Polygon edge color.
         linewidth: Polygon edge line width.
@@ -133,17 +137,11 @@ def _plot_cells_overlay(adata, image_path, plot_path, title=None, downsample=1,
                     elif g.geom_type == "MultiPolygon":
                         parts = sorted(g.geoms, key=lambda p: p.area, reverse=True)
                         polys.append(np.array(parts[0].exterior.coords) / scale)
-            else:  # stardist polys.pckl
-                import pickle
-                with open(geometry_path, "rb") as f:
-                    pd_ = pickle.load(f)
-                if isinstance(pd_, dict) and "coord" in pd_:
-                    pd_ = pd_["coord"]
-                polys = [np.asarray(p.exterior.coords) for p in pd_
-                         if hasattr(p, "exterior")]
+            else:
+                polys = nuclei_xy_polygons(geometry_path, allow_legacy_pickle=allow_legacy_pickle,
+                                           object_ids=adata.obs.get("object_id"))
         except Exception as exc:
-            print(f"[_plot_cells_overlay] geometry load FAILED: {exc}")
-            polys = None
+            raise ValueError(f"Cannot load geometry {geometry_path}: {exc}") from exc
 
     fig_w = 20 * figsize_scale
     fig, ax = plt.subplots(1, 1, figsize=(fig_w, fig_w), dpi=dpi)
@@ -180,7 +178,8 @@ def _plot_cells_overlay(adata, image_path, plot_path, title=None, downsample=1,
 
 def plot_cells_crop(adata, image_path, plot_path, roi=None, roi_size=1000,
                     geometry_path=None, geometry_kind="auto",
-                    edge_color="tab:blue", linewidth=0.8, dpi=150, title=None):
+                    edge_color="tab:blue", linewidth=0.8, dpi=150, title=None,
+                    allow_legacy_pickle=False):
     """HE background + cell overlay for a user-selected ROI crop (HD).
 
     Lets the user choose a region of interest (in fullres pixel coords) and
@@ -195,7 +194,7 @@ def plot_cells_crop(adata, image_path, plot_path, roi=None, roi_size=1000,
             - tuple of 2: (cx, cy) center -> expand by roi_size
             - None: auto-pick the densest region from cell centroids
         roi_size: Square crop size when roi is (cx, cy) or None (default 1000).
-        geometry_path: Path to geometry source (Proseg parquet / StarDist pckl).
+        geometry_path: Path to geometry source (Proseg parquet / StarDist NPZ).
         geometry_kind: 'proseg' | 'stardist' | 'auto'.
         edge_color: Polygon edge color.
         linewidth: Polygon edge line width.
@@ -282,22 +281,14 @@ def plot_cells_crop(adata, image_path, plot_path, roi=None, roi_size=1000,
                     cx_, cy_ = c[:, 0].mean(), c[:, 1].mean()
                     if x0 <= cx_ < x1 and y0 <= cy_ < y1:
                         polys.append(c)
-            else:  # stardist pckl
-                import pickle
-                with open(geometry_path, "rb") as f:
-                    pd_ = pickle.load(f)
-                if isinstance(pd_, dict) and "coord" in pd_:
-                    pd_ = pd_["coord"]
-                for p in pd_:
-                    if not hasattr(p, "exterior"):
-                        continue
-                    c = np.asarray(p.exterior.coords)
-                    cx_, cy_ = c[:, 0].mean(), c[:, 1].mean()
-                    if x0 <= cx_ < x1 and y0 <= cy_ < y1:
+            else:
+                for c in nuclei_xy_polygons(geometry_path, allow_legacy_pickle=allow_legacy_pickle,
+                                           object_ids=adata.obs.get("object_id")):
+                    # Draw polygons intersecting the ROI, including cells centered just outside it.
+                    if c[:, 0].max() >= x0 and c[:, 0].min() < x1 and c[:, 1].max() >= y0 and c[:, 1].min() < y1:
                         polys.append(c)
         except Exception as exc:
-            print(f"[plot_cells_crop] geometry load FAILED: {exc}")
-            polys = []
+            raise ValueError(f"Cannot load geometry {geometry_path}: {exc}") from exc
 
     # --- 绘制 ---
     fig, ax = plt.subplots(1, 1, figsize=(12, 12), dpi=dpi)
@@ -321,6 +312,8 @@ def plot_cells_crop(adata, image_path, plot_path, roi=None, roi_size=1000,
 
     if title is None:
         title = f"{n_cells} cells (crop x{x0}:{x1}, y{y0}:{y1})"
+    ax.set_xlim(-0.5, x1 - x0 - 0.5)
+    ax.set_ylim(y1 - y0 - 0.5, -0.5)
     ax.set_title(title)
     ax.set_aspect("equal")
     ax.axis("off")
@@ -650,6 +643,28 @@ def load_visium_hd(
     return "\n".join(steps)
 
 
+def _load_stardist_pretrained(model_class, model_type):
+    """Use Keras' checksum-verified cache when Windows cannot create symlinks."""
+    try:
+        return model_class.from_pretrained(model_type)
+    except OSError as error:
+        if getattr(error, "winerror", None) != 1314:
+            raise
+        from pathlib import Path
+        from csbdeep.models.pretrained import get_model_details, get_file
+        key, _, details = get_model_details(model_class, model_type)
+        target = str(Path("models") / model_class.__name__ / key)
+        extracted = Path(get_file(fname=key + ".zip", origin=details["url"],
+                                  file_hash=details["hash"], cache_subdir=target, extract=True))
+        candidates = [extracted, extracted / key, extracted.parent / key]
+        folder = next((path for path in candidates if (path / "config.json").is_file()), None)
+        if folder is None:
+            raise RuntimeError(f"StarDist model config not found in {extracted}") from error
+        model = model_class(config=None, name=folder.name, basedir=folder.parent)
+        model.basedir = None
+        return model
+
+
 def segment_cells(
     image_path: str,
     output_path: str = "./nuclei_labels.npz",
@@ -669,14 +684,14 @@ def segment_cells(
     Mirrors 10x NucleiSegmentation.py: percentile normalization (5,95),
     StarDist 2D_versatile_he, predict_instances_big with
     prob_thresh/nms_thresh low, saves BOTH the label array (NPZ) and the
-    polygon dict (pickle, key 'coord') used by :func:`bin_to_cell` for
+    polygon dict (numeric NPZ, key 'coord') used by :func:`bin_to_cell` for
     geopandas sjoin 'within'.
 
     Args:
         image_path: Path to the H&E image (btf/tif/png/jpg).
         output_path: Where to save the label array (NPZ with key 'labels').
-        polys_path: Where to save the polygon dict (pickle). Defaults to
-            output_path with '_polys.pckl' suffix.
+        polys_path: Where to save the polygon dict (numeric NPZ). Defaults to
+            output_path with '_polys.npz' suffix.
         model_type: StarDist model name ('2D_versatile_he' or '2D_versatile_fluo').
         tile_size: Tile size for big-image inference.
         overlap: Tile overlap in pixels.
@@ -708,15 +723,13 @@ def segment_cells(
                 "pip install stardist tensorflow")
 
     import numpy as np
-    import scipy.ndimage as ndi
-    import pickle
 
     if polys_path is None:
-        polys_path = _os.path.splitext(output_path)[0] + "_polys.pckl"
+        polys_path = _os.path.splitext(output_path)[0] + "_polys.npz"
 
     # 按扩展名选择读取器: tif/tiff 用 tifffile, 其他(png/jpg)用 imageio
     ext = _os.path.splitext(image_path)[1].lower()
-    if ext in (".tif", ".tiff"):
+    if ext in (".tif", ".tiff", ".btf"):
         from tifffile import imread
         img = imread(image_path)
     else:
@@ -731,7 +744,7 @@ def segment_cells(
     from csbdeep.utils import normalize
     img = normalize(img, normalize_pct[0], normalize_pct[1])
 
-    model = StarDist2D.from_pretrained(model_type)
+    model = _load_stardist_pretrained(StarDist2D, model_type)
     # 官方阈值: prob_thresh=0.01, nms_thresh=0.001
     if prob_thresh is None:
         prob_thresh = 0.01
@@ -752,20 +765,11 @@ def segment_cells(
             normalizer=None, n_tiles=(4, 4, 1),
         )
 
-    # 过滤过小区域
-    if min_area > 0:
-        labels = ndi.label(labels)[0]
-        sizes = ndi.sum_labels(np.ones_like(labels), labels, index=np.arange(1, labels.max() + 1))
-        keep = np.where(sizes >= min_area)[0] + 1
-        mask = np.isin(labels, keep)
-        labels = ndi.label(mask)[0]
-        # 过滤后 polys 与 labels 可能不对齐: 只保留 labels 仍存在的核 (按质心匹配)
-        # 简化: 不重编号 polys, 由 bin_to_cell 用 sjoin 时以 polygon 为准
-
-    n_nuclei = labels.max()
+    labels, polys = filter_nuclei_instances(labels, polys, min_area)
+    n_nuclei = len(polys["coord"])
+    _os.makedirs(_os.path.dirname(output_path) or ".", exist_ok=True)
+    save_nuclei_polygons(polys_path, polys)
     np.savez_compressed(output_path, labels=labels)
-    with open(polys_path, "wb") as f:
-        pickle.dump(polys, f)
 
     # 核分割检查图 (私有绘图函数, 函数内保存 PNG + 写进日志)
     if plot_path is None:
@@ -788,6 +792,7 @@ def bin_to_cell(
     image_path: str = None,
     plot_path: str = None,
     expand_px: float = 29.0,
+    allow_legacy_pickle: bool = False,
 ) -> str:
     """Assign 2 um bins to nuclei via geopandas sjoin (10x official + expansion).
 
@@ -804,7 +809,7 @@ def bin_to_cell(
 
     Args:
         adata_path: Path to the loaded Visium HD h5ad (bins x genes).
-        polys_path: Path to pickle with StarDist polys (key 'coord').
+        polys_path: Path to numeric NPZ with StarDist polys (key 'coord').
         output_path: Where to save the cell-level AnnData.
         barcode_map_path: Optional path for the official Nuclei_Barcode_Map.csv.
         image_path: Optional H&E image for overlay plot.
@@ -818,102 +823,73 @@ def bin_to_cell(
     import numpy as np
     import anndata as ad
     import pandas as pd
-    import pickle
     from scipy import sparse
     import geopandas as gpd
     from shapely.geometry import Polygon, Point
 
     adata = ad.read_h5ad(adata_path)
-    with open(polys_path, "rb") as f:
-        polys = pickle.load(f)
+    polys = load_nuclei_polygons(polys_path, allow_legacy_pickle=allow_legacy_pickle)
+    if not np.isfinite(expand_px) or expand_px < 0:
+        raise ValueError("expand_px must be finite and nonnegative")
+    if not adata.obs_names.is_unique:
+        raise ValueError("Bin barcodes must be unique")
 
     if "spatial" not in adata.obsm:
         return "Error: adata lacks obsm['spatial']; cannot assign bins to cells"
 
-    # --- 官方: 构建核多边形 GeoDataFrame ---
-    geometries = []
-    for nuclei in range(len(polys["coord"])):
-        coords = [(y, x) for x, y in zip(polys["coord"][nuclei][0], polys["coord"][nuclei][1])]
-        geometries.append(Polygon(coords))
+    coords = np.asarray(adata.obsm["spatial"], dtype=float)
+    if coords.shape != (adata.n_obs, 2) or not np.isfinite(coords).all():
+        raise ValueError("Bin spatial coordinates must be finite (n_bins, 2) values")
+    geometries = [Polygon(vertices[::-1].T) for vertices in polys["coord"]]
+    if not geometries or any(g.is_empty or not g.is_valid or g.area <= 0 for g in geometries):
+        raise ValueError("Provide at least one valid nonempty nucleus polygon")
     gdf = gpd.GeoDataFrame(geometry=geometries)
-    gdf["id"] = [f"ID_{i+1}" for i, _ in enumerate(gdf.index)]
-
-    # --- 核扩展 (10x Space Ranger 默认 8 um; 0 = 不扩展, 严格 within) ---
-    if expand_px and expand_px > 0:
-        gdf["geometry"] = gdf["geometry"].buffer(expand_px)
-
-    # --- 官方: bin 点 GeoDataFrame (用 fullres 坐标) ---
-    df_pos = pd.DataFrame({
-        "index": adata.obs_names,
-        "pxl_col_in_fullres": adata.obsm["spatial"][:, 0],
-        "pxl_row_in_fullres": adata.obsm["spatial"][:, 1],
-    })
-    geometry = [Point(xy) for xy in zip(df_pos["pxl_col_in_fullres"], df_pos["pxl_row_in_fullres"])]
-    gdf_coordinates = gpd.GeoDataFrame(df_pos, geometry=geometry)
-
-    # --- sjoin: 扩展后核内 bins (intersects 兼容 buffer 边界) ---
-    result_spatial_join = gpd.sjoin(gdf_coordinates, gdf, how="left", predicate="intersects")
-    result_spatial_join["is_within_polygon"] = ~result_spatial_join["index_right"].isna()
-    # 重叠 bins: 同一 bin 命中多个核 (扩展后相邻核会重叠)
-    dup = result_spatial_join[result_spatial_join.duplicated(subset=["index"])]
-    barcodes_in_overlapping_polygons = pd.unique(dup["index"]) if len(dup) else []
-    result_spatial_join["is_overlap"] = result_spatial_join["index"].isin(barcodes_in_overlapping_polygons)
-
-    # --- 重叠 bins 按最近核分配 (shapely 距离) ---
-    if len(barcodes_in_overlapping_polygons):
-        keep_rows = []
-        for bc in barcodes_in_overlapping_polygons:
-            sub = result_spatial_join[result_spatial_join["index"] == bc]
-            if len(sub) == 0:
-                continue
-            # 用 sub 自身的标签索引取最近行 (dists 的索引与 sub 一致)
-            pt = sub.iloc[0]["geometry"]
-            dists = sub["geometry"].apply(lambda g: pt.distance(g))
-            best_label = dists.idxmin()
-            keep_rows.append(best_label)
-        # 去掉重叠行, 保留最近的那行
-        overlap_idx = result_spatial_join[result_spatial_join["is_overlap"]].index
-        drop_idx = [i for i in overlap_idx if i not in keep_rows]
-        result_spatial_join = result_spatial_join.drop(index=drop_idx)
-
-    # --- 只保留命中核的 bin ---
-    result = result_spatial_join.loc[result_spatial_join["is_within_polygon"]]
+    gdf["object_id"] = np.arange(1, len(gdf) + 1)
+    gdf["id"] = [f"ID_{i}" for i in gdf["object_id"]]
+    gdf["nucleus_x"] = gdf.geometry.centroid.x
+    gdf["nucleus_y"] = gdf.geometry.centroid.y
+    if expand_px:
+        gdf["geometry"] = gdf.geometry.buffer(expand_px)
+    bins = gpd.GeoDataFrame({"bin_row": np.arange(adata.n_obs), "index": adata.obs_names},
+                           geometry=gpd.points_from_xy(coords[:, 0], coords[:, 1]))
+    candidates = gpd.sjoin(bins, gdf, how="inner", predicate="intersects")
+    if candidates.empty:
+        raise ValueError("No bins overlap the nucleus polygons; check image and coordinate alignment")
+    candidates["is_overlap"] = candidates.duplicated("bin_row", keep=False)
+    candidates["_distance2"] = ((candidates.geometry.x - candidates["nucleus_x"]) ** 2 +
+                                (candidates.geometry.y - candidates["nucleus_y"]) ** 2)
+    result = (candidates.sort_values(["bin_row", "_distance2", "object_id"], kind="stable")
+              .drop_duplicates("bin_row", keep="first").copy())
+    result["is_within_polygon"] = True
     if barcode_map_path:
+        os.makedirs(os.path.dirname(barcode_map_path) or ".", exist_ok=True)
         result[["index", "id", "is_within_polygon", "is_overlap"]].to_csv(barcode_map_path, index=False)
 
-    # --- 聚合: bin -> cell ---
-    bin_to_cell = np.zeros(adata.n_obs, dtype=np.int64)
-    barcode_to_row = pd.Series(np.arange(adata.n_obs), index=adata.obs_names)
-    rows_idx = barcode_to_row.loc[result["index"]].to_numpy()
-    id_to_cell = {cid: i for i, cid in enumerate(result["id"].unique())}
-    cols_idx = np.array([id_to_cell[c] for c in result["id"]])
-    data = np.ones(len(rows_idx))
-    bin_cell_mat = sparse.csr_matrix((data, (rows_idx, cols_idx)), shape=(adata.n_obs, len(id_to_cell)))
-
-    cell_gene = bin_cell_mat.T @ adata.X
-
-    cell_ids = np.array([int(c.split("_")[1]) for c in id_to_cell.keys()])
-    counts = np.bincount(cols_idx, minlength=len(id_to_cell))
-    cell_adata = ad.AnnData(
-        X=cell_gene,
-        obs=pd.DataFrame(index=[f"cell_{cid}" for cid in cell_ids]),
-        var=adata.var.copy(),
-    )
-    # 质心坐标: 每个 cell 内 bin 坐标均值
-    cell_coords_mean = np.zeros((len(cell_ids), 2))
-    for i, cid in enumerate(cell_ids):
-        mask = cols_idx == i
-        cell_coords_mean[i] = adata.obsm["spatial"][rows_idx[mask]].mean(axis=0)
-    cell_adata.obsm["spatial"] = cell_coords_mean
+    rows_idx = result["bin_row"].to_numpy(dtype=np.int64)
+    cell_ids = np.sort(result["object_id"].unique()).astype(np.int64)
+    cols_idx = np.searchsorted(cell_ids, result["object_id"].to_numpy())
+    assignment = sparse.csr_matrix((np.ones(len(rows_idx), dtype=np.int64), (rows_idx, cols_idx)),
+                                   shape=(adata.n_obs, len(cell_ids)))
+    cell_gene = assignment.T @ adata.X
+    counts = np.bincount(cols_idx, minlength=len(cell_ids))
+    # Each assigned bin occurs once, so every gene's assigned count is conserved.
+    expected = np.asarray(adata.X[rows_idx].sum(axis=0)).ravel()
+    actual = np.asarray(cell_gene.sum(axis=0)).ravel()
+    if not np.allclose(actual, expected):
+        raise RuntimeError("Bin aggregation failed per-gene count conservation")
+    cell_adata = ad.AnnData(X=cell_gene,
+                           obs=pd.DataFrame(index=[f"cell_{cid}" for cid in cell_ids]),
+                           var=adata.var.copy())
+    cell_adata.obsm["spatial"] = np.asarray(assignment.T @ coords) / counts[:, None]
     cell_adata.obs["object_id"] = cell_ids
     cell_adata.obs["bin_count"] = counts
     cell_adata.uns["bin_to_cell"] = {
-        "expand_px": expand_px,
-        "n_bins_total": int(adata.n_obs),
-        "n_bins_assigned": int(len(result)),
-        "n_cells": int(len(cell_ids)),
-        "frac_bins_assigned": round(len(result) / max(adata.n_obs, 1), 4),
+        "expand_px": float(expand_px), "n_bins_total": int(adata.n_obs),
+        "n_bins_assigned": int(len(result)), "n_bins_unassigned": int(adata.n_obs - len(result)),
+        "n_cells": int(len(cell_ids)), "frac_bins_assigned": len(result) / adata.n_obs,
+        "overlap_rule": "nearest_original_nucleus_centroid_then_object_id",
     }
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     cell_adata.write(output_path, compression="lzf")
 
@@ -925,7 +901,7 @@ def bin_to_cell(
             _plot_cells_overlay(cell_adata, image_path, plot_path,
                                 title=f"{len(cell_ids)} cells (StarDist, expand {expand_px}px)",
                                 geometry_path=polys_path, geometry_kind="stardist",
-                                edge_color="tab:blue", linewidth=0.12)
+                                edge_color="tab:blue", linewidth=0.12, allow_legacy_pickle=allow_legacy_pickle)
             overlay_note = f"; overlay -> {plot_path}"
         except Exception as exc:
             overlay_note = f"; overlay FAILED: {exc}"
@@ -949,6 +925,7 @@ def run_proseg(
     quad_size: int = 150,
     max_transcript_nucleus_distance: int = 60,
     nthreads: int = 32,
+    proseg_executable: str = "proseg",
 ) -> str:
     """Run Proseg Bayesian cell segmentation on Visium HD binned data.
 
@@ -984,7 +961,14 @@ def run_proseg(
 
     # --- 自包含: NPZ(labels) -> uint32 NPY (Proseg 强制要求) ---
     masks_path = _os.path.join(output_dir, "proseg_masks.npy")
-    labels = np.load(labels_npz)["labels"]
+    if not np.isfinite(cellpose_scale) or cellpose_scale <= 0:
+        raise ValueError("cellpose_scale must be finite and positive")
+    with np.load(labels_npz, allow_pickle=False) as archive:
+        labels = archive["labels"]
+    if labels.ndim != 2 or not np.issubdtype(labels.dtype, np.integer) or (labels < 0).any():
+        raise ValueError("Proseg masks must be nonnegative integer labels in two dimensions")
+    if labels.max(initial=0) > np.iinfo(np.uint32).max:
+        raise ValueError("Proseg mask IDs exceed uint32")
     if labels.dtype != np.uint32:
         labels = labels.astype(np.uint32)
     np.save(masks_path, labels)
@@ -1002,7 +986,11 @@ def run_proseg(
     if _os.path.exists(h5):
         with h5py.File(h5, "r") as f:
             grp = f["matrix"]
-            transcripts = len(grp["data"])
+            dataset = grp["data"]
+            transcripts = sum(int(dataset[i:i + 1_000_000].sum(dtype=np.int64))
+                              for i in range(0, len(dataset), 1_000_000))
+    else:
+        raise FileNotFoundError(h5)
     img_path = None
     for cand in (_os.path.join(visiumhd_dir, "tissue_image.btf"),
                  _os.path.join(visiumhd_dir, "tissue_image.tiff"),
@@ -1035,7 +1023,7 @@ def run_proseg(
     if burnin_samples is None:
         burnin_samples = samples
     if recorded_samples is None:
-        recorded_samples = max(50, samples // 2)
+        recorded_samples = max(1, min(samples, samples // 2))
 
     # 内存估算: voxel 数 * 状态 + 转录本状态
     mpp = cellpose_scale
@@ -1046,7 +1034,7 @@ def run_proseg(
         no_diffusion = est_gb > mem_gb * 0.6
 
     # --- 组装 proseg 命令 ---
-    cmd = ["proseg", "--visiumhd",
+    cmd = [str(proseg_executable), "--visiumhd",
            "--cellpose-masks", masks_path,
            "--cellpose-scale", str(cellpose_scale),
            "--voxel-size", str(voxel_size),
@@ -1060,6 +1048,7 @@ def run_proseg(
            "--output-spatialdata", _os.path.join(output_dir, "proseg_out.zarr"),
            "--output-counts", _os.path.join(output_dir, "proseg_counts.mtx.gz"),
            "--output-cell-metadata", _os.path.join(output_dir, "proseg_meta.csv.gz"),
+           "--output-gene-metadata", _os.path.join(output_dir, "proseg_genes.csv.gz"),
            binned_dir]
     if no_diffusion:
         cmd.append("--no-diffusion")
@@ -1082,15 +1071,10 @@ def run_proseg(
 
     counts_path = _os.path.join(output_dir, "proseg_counts.mtx.gz")
     meta_path = _os.path.join(output_dir, "proseg_meta.csv.gz")
-    M = mmread(counts_path).tocsr().astype(np.float32)
-    meta = pd.read_csv(meta_path)
-    cell_names = [f"cell_{int(x)}" for x in meta["cell"]]
-    cell_adata = ad.AnnData(X=M, obs=meta.set_index(pd.Index(cell_names)))
-    coords = np.column_stack([
-        meta["centroid_x"].to_numpy() / cellpose_scale,
-        meta["centroid_y"].to_numpy() / cellpose_scale,
-    ])
-    cell_adata.obsm["spatial"] = coords
+    genes_path = _os.path.join(output_dir, "proseg_genes.csv.gz")
+    cell_adata = read_proseg_counts(counts_path, meta_path, genes_path,
+                                   microns_per_pixel=cellpose_scale)
+    M = cell_adata.X
 
     out_h5ad = _os.path.join(output_dir, "proseg_cells.h5ad")
     cell_adata.write(out_h5ad, compression="lzf")
