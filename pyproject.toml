@@ -36,6 +36,7 @@ dependencies = [
 # 请运行 install/install_r_packages.R（需要 R >= 4.3 + Rtools/Build Tools）
 r = []
 hd = ["stardist>=0.9", "tensorflow>=2.16", "csbdeep", "tifffile", "geopandas>=0.14", "shapely>=2", "pyarrow>=14", "imageio", "h5py"]
+atera = ["zarr>=2.18,<4", "tifffile", "imagecodecs"]
 test = ["pytest>=8", "geopandas>=0.14", "shapely>=2", "pyarrow>=14", "imageio"]
 
 [tool.setuptools]

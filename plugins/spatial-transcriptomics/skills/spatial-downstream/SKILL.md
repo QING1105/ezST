@@ -8,7 +8,7 @@ license: MIT
 
 表达聚类使用 `identify_spatial_domains(..., spatial_weight=0)`；加入空间邻接时显式设置 0 到 1 之间的权重，并报告 `uns['domain_clustering']`。CellChat 默认 `mode="expression"`；空间模式需要 `mode="spatial"`、`microns_per_coordinate`、`spatial_tolerance`，按样本尺度设置作用范围和距离缩放。输入优先使用保存的原始 counts。CellChat 输出实际为 `cellchat_communication.csv`、`cellchat_pathways.csv`、`cellchat.rds`、`cellchat_network.png` 与 `run_settings.json`。
 
-StarDist 几何使用数值 `.npz`，旧 pickle 读取需显式 `allow_legacy_pickle=True`。HD 裁图通过 `--image`、`--cells`、`--geometry`、`--roi` 指定输入；全部坐标使用全分辨率图像像素。Proseg 基因名来自其导出的 `proseg_genes.csv.gz`，导入后核对 `var_names`。Python 与插件内运行文件通过 `python scripts/sync_plugin_runtime.py` 同步。
+StarDist 几何使用数值 `.npz`，旧 pickle 读取需显式 `allow_legacy_pickle=True`。HD 裁图通过 `--image`、`--cells`、`--geometry`、`--roi` 指定输入；该 HD 裁图接口使用全分辨率图像像素坐标；Atera 数据保留其微米坐标。Proseg 基因名来自其导出的 `proseg_genes.csv.gz`，导入后核对 `var_names`。Python 与插件内运行文件通过 `python scripts/sync_plugin_runtime.py` 同步。
 
 
 
@@ -25,6 +25,10 @@ Run analyses that are **common across all platforms** after the platform branch 
   - cell-type labels in `obs`:
     - Classic Visium: deconvolution proportions (dominant cell type per spot) from S4
     - Visium HD / Xenium / Atera: cell-type annotations (e.g., CellTypist / CellAssign)
+
+## Atera input
+
+For native Atera, use the reviewed cell-level h5ad from `spatial-atera`, including `layers["counts"]`, `obs["cell_type"]` and `obsm["spatial"]` in micrometres. Run separately for each ROI. Spatial CellChat uses `microns_per_coordinate=1`; report its actual distance parameters. Choose the annotation field and cell groups from the current sample, and record the selection used for downstream analysis.
 
 ## Steps
 
@@ -48,7 +52,7 @@ Run analyses that are **common across all platforms** after the platform branch 
 ## Outputs
 
 - `results/08_neighborhood/enrichment_zscore.csv` + heatmap
-- `results/09_communication/CellChat_object.rds` + network plots
+- `cellchat.rds`, `cellchat_communication.csv`, `cellchat_pathways.csv`, `cellchat_network.png`, `run_settings.json` in the selected communication output directory
 - `results/10_velocity/velocity_stream.png` (if applicable)
 
 ## Biological Interpretation

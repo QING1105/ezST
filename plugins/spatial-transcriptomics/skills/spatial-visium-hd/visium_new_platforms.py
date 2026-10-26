@@ -1180,25 +1180,43 @@ def load_atera(
     matrix_path: str,
     sample_id: str = None,
     output_path: str = "./atera_cells.h5ad",
+    *,
+    roi: tuple = None,
+    use_official_filter: bool = True,
+    cell_type_key: str = "azimuth_coarse",
+    chunk_rows: int = 2048,
 ) -> str:
-    """Load Atera cell-level AnnData (platform segmentation is ground truth).
+    """Load official Atera AnnData Zarr or a previously prepared h5ad.
 
     Atera is 10x's whole-transcriptome in situ platform. Official output is
     cell-level AnnData + Zarr segmentation. No re-segmentation or deconvolution.
 
     Args:
-        matrix_path: Path to cell-level AnnData (.h5ad).
+        matrix_path: Output directory, experiment.spatial, cell_feature_matrix.zarr.zip, or h5ad.
         sample_id: Optional sample identifier.
         output_path: Where to save the cell-level AnnData.
+        roi: For native Zarr, (xmin, ymin, xmax, ymax), in micrometres.
+        use_official_filter: For native Zarr, retain obs['filtered'] == True.
+        cell_type_key: Official annotation field to copy to cell_type; None keeps labels unset.
+        chunk_rows: Rows per read when converting the native sparse matrix.
 
     Returns:
         str: Log.
     """
     import anndata as ad
 
-    steps = []
+    matrix_path = str(matrix_path)
     if not matrix_path.endswith(".h5ad"):
-        return "Error: Atera input must be cell-level AnnData (.h5ad)"
+        try:
+            from .atera import load_atera_zarr
+        except ImportError:
+            from atera import load_atera_zarr
+        return load_atera_zarr(matrix_path, output_path, sample_id=sample_id, roi=roi,
+                               use_official_filter=use_official_filter,
+                               cell_type_key=cell_type_key, chunk_rows=chunk_rows)
+    if roi is not None:
+        raise ValueError("Pass the native Atera Zarr for ROI extraction in micrometres")
+    steps = []
     adata = ad.read_h5ad(matrix_path)
     steps.append(f"Loaded Atera AnnData: {adata.shape[0]} cells x {adata.shape[1]} genes")
 
@@ -1214,13 +1232,18 @@ def load_atera(
     if sample_id:
         adata.obs["sample_id"] = sample_id
 
-    adata.uns["spatial_meta"] = {
+    meta = dict(adata.uns.get("spatial_meta", {}))
+    if cell_type_key is not None and cell_type_key in adata.obs:
+        adata.obs["cell_type"] = adata.obs[cell_type_key].astype("category")
+        meta["cell_type_source"] = cell_type_key
+    meta.update({
         "source": matrix_path,
         "platform": "atera",
         "n_cells": adata.n_obs,
         "n_genes": adata.n_vars,
         "has_coords": "spatial" in adata.obsm,
-    }
+    })
+    adata.uns["spatial_meta"] = meta
 
     adata.write(output_path, compression="lzf")
     steps.append(f"Saved Atera cells to {output_path}")

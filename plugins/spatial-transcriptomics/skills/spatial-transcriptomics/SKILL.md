@@ -8,7 +8,7 @@ license: MIT
 
 表达聚类使用 `identify_spatial_domains(..., spatial_weight=0)`；加入空间邻接时显式设置 0 到 1 之间的权重，并报告 `uns['domain_clustering']`。CellChat 默认 `mode="expression"`；空间模式需要 `mode="spatial"`、`microns_per_coordinate`、`spatial_tolerance`，按样本尺度设置作用范围和距离缩放。输入优先使用保存的原始 counts。CellChat 输出实际为 `cellchat_communication.csv`、`cellchat_pathways.csv`、`cellchat.rds`、`cellchat_network.png` 与 `run_settings.json`。
 
-StarDist 几何使用数值 `.npz`，旧 pickle 读取需显式 `allow_legacy_pickle=True`。HD 裁图通过 `--image`、`--cells`、`--geometry`、`--roi` 指定输入；全部坐标使用全分辨率图像像素。Proseg 基因名来自其导出的 `proseg_genes.csv.gz`，导入后核对 `var_names`。Python 与插件内运行文件通过 `python scripts/sync_plugin_runtime.py` 同步。
+StarDist 几何使用数值 `.npz`，旧 pickle 读取需显式 `allow_legacy_pickle=True`。HD 裁图通过 `--image`、`--cells`、`--geometry`、`--roi` 指定输入；该 HD 裁图接口使用全分辨率图像像素坐标；Atera 数据保留其微米坐标。Proseg 基因名来自其导出的 `proseg_genes.csv.gz`，导入后核对 `var_names`。Python 与插件内运行文件通过 `python scripts/sync_plugin_runtime.py` 同步。
 
 
 
@@ -24,6 +24,15 @@ Run 10x Visium spatial transcriptomics analysis as a **staged pipeline**. The wo
 4. **Wait for review**. The user chooses one of: `通过` (proceed), `调整` (adjust parameters and rerun this stage), or `跳过` (skip this stage and continue).
 
 Do NOT proceed to the next stage without an explicit user decision.
+
+## Platform routing
+
+For Atera native outputs (`experiment.spatial` + `cell_feature_matrix.zarr.zip`), follow
+the sibling `spatial-atera/SKILL.md`. Its worked example is the official Atera 1.0.4
+FFPE human kidney dataset. The route is load/QC → expression and official cell
+annotations → domains/SVG → shared neighborhood/CellChat. The input is cell-level;
+use its cell annotation stage. Coordinates remain in micrometres, and spatial
+analysis runs separately for each ROI. The classic Visium stages below apply to spots.
 
 ## Environment Check (run first)
 

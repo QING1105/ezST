@@ -130,6 +130,7 @@ codex plugin add spatial-transcriptomics@ezST
 | `spatial-s3-domains-svg` | S3 | `identify_spatial_domains` → `find_spatially_variable_genes` | 空间域、SVG |
 | `spatial-s4-deconvolve` | S4 | `deconvolve_spatial_destvi` / `deconvolve_spatial_spotlight` | 细胞类型反卷积 |
 | `spatial-s5-downstream` | S5 | `spatial_neighborhood_enrichment` → `infer_spatial_cell_communication` | 邻域富集、细胞通讯 |
+| `spatial-atera` | Atera 分支 | 官方 Zarr 读取与分割核对 → 表达分析 → 空间下游 | 用户的 Atera 数据 |
 
 ## 数据
 
@@ -142,6 +143,7 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 | **Classic Visium** | 10x Visium (v1/v2) | spot (~55µm) | 加载+QC → 归一化+聚类 → 空间域+SVG → **反卷积** → 邻域+通讯 | spot 是混合信号，需要反卷积解出细胞类型 |
 | **Visium HD (cell)** | 10x Visium HD | **单细胞**（分割后） | 分割（2 种方法）→ QC → **注释（label transfer）** → 空间域 → 邻域+通讯 | 分割后按 scRNA 处理，**不需要反卷积**，用注释 |
 | **Visium HD (bin)** | 10x Visium HD | bin（2/8/16µm 等规格） | 按 spot 类似处理或先分割为细胞 | bin 是转录捕获单元，非生物学单元；bin 规格由数据决定 |
+| **Atera** | 10x Atera | **单细胞**（官方分割） | 官方 Zarr 读取+QC → 表达与注释 → 空间域 → 邻域+通讯 | 保存原始基因计数、官方注释和微米坐标 |
 
 ### Visium HD 分割的两种方法
 
@@ -155,23 +157,31 @@ ezST 按**数据类型**自动选择分析分支（LLM 读取数据画像后判�
 ### 数据集
 
 - 公开测试数据：GEO [GSE246011](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE246011)（胃癌 Visium，6 样本，wide-CSV 格式）
+- **Atera 示例：[10x 官方 FFPE 人正常肾脏](https://www.10xgenomics.com/datasets/atera-wta-ffpe-human-nd-kidney)**（Atera Onboard Analysis 1.0.4，18,049 个基因），分析组图见下方。
 - **Visium HD 示例：10x Genomics 官方小鼠小肠（Mouse Small Intestine, FFPE, C57BL/6）**
   - 数据页：[Visium HD Spatial Gene Expression Library, Mouse Small Intestine (FFPE)](https://www.10xgenomics.com/datasets/visium-hd-cytassist-gene-expression-libraries-of-mouse-intestine)
   - 直接下载（Space Ranger 3.0.0 输出，含 2/8/16µm bin + 高分辨率组织图像）：
     - `https://cf.10xgenomics.com/samples/spatial-exp/3.0.0/Visium_HD_Mouse_Small_Intestine/Visium_HD_Mouse_Small_Intestine_binned_outputs.tar.gz`
     - `https://cf.10xgenomics.com/samples/spatial-exp/3.0.0/Visium_HD_Mouse_Small_Intestine/Visium_HD_Mouse_Small_Intestine_tissue_image.btf`
   - 参考注释：Haber et al. 2017（小鼠小肠 scRNA-seq，label transfer）
-- 反卷积/注释阶段需要参考 scRNA-seq（h5ad + 细胞类型标签）
+- Classic Visium 反卷积及参考映射注释使用 scRNA-seq（h5ad + 细胞类型标签）；Atera 肾脏示例读取官方已有细胞注释。
 
 ## 迭代记录
 
 - **0823**：我们修复了一个上传内容有误的 bug，已重新 git。
 - **0826**：补充上了 Visium HD 的适配，其中 segment 部分提供了两种方法，10x 官方的 bin2cell 和 Proseg，具体分割效果见最后组图。
 - **1026**：修复了安装依赖、原始计数与空间分析、Visium HD 分割聚合和 Proseg 基因映射问题，并完善 Windows 兼容性及下游流程。
+- **1026（Atera）**：使用官方人肾脏数据完善 Atera 正式格式读取、细胞分割核对及空间注释，并补充全流程组图。
 
 ### Visium HD 全流程组图（0826）
 
 ![Visium HD 全流程](docs/figs/visium_hd_overview.png)
+
+### Atera 全流程组图（1026）
+
+10x 官方 FFPE 人正常肾脏；全组织 398,873 个细胞，局部分析 2,183 个细胞。
+
+![Atera 全流程](plugins/spatial-transcriptomics/skills/spatial-atera/assets/kidney_example.png)
 
 ## 目录结构
 
